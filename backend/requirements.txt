@@ -5,3 +5,6 @@ python-multipart
 ultralytics
 openai
 python-dotenv
+pandas
+numpy
+scikit-learn
