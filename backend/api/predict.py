@@ -7,11 +7,11 @@ from typing import Dict, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-# Use package-relative imports for local modules instead of modifying sys.path
-from ..data_generator import generate_dataset
-from ..prediction import predict_future_scores
-from ..charts.line_chart import plot_prediction_chart
-from ..charts.radar_chart import plot_defect_radar, plot_skill_radar, generate_sample_data
+# 添加项目根目录到路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+backend_dir = os.path.dirname(current_dir)
+sys.path.insert(0, backend_dir)
+
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
@@ -52,6 +52,24 @@ async def get_prediction():
     """
     try:
         logger.info("开始执行预测流程...")
+        
+        # 动态导入模块（如果之前导入失败）
+        import importlib
+        try:
+            data_gen = importlib.import_module('data_generator')
+            prediction_mod = importlib.import_module('prediction')
+            line_chart_mod = importlib.import_module('charts.line_chart')
+            radar_chart_mod = importlib.import_module('charts.radar_chart')
+            
+            generate_dataset = data_gen.generate_dataset
+            predict_future_scores = prediction_mod.predict_future_scores
+            plot_prediction_chart = line_chart_mod.plot_prediction_chart
+            plot_defect_radar = radar_chart_mod.plot_defect_radar
+            plot_skill_radar = radar_chart_mod.plot_skill_radar
+            generate_sample_data = radar_chart_mod.generate_sample_data
+        except ImportError as e:
+            logger.error(f"导入模块失败: {e}")
+            raise HTTPException(status_code=500, detail=f"服务器配置错误: {e}")
         
         # 步骤1: 生成历史数据集
         logger.info("步骤1: 生成历史数据集...")
@@ -147,6 +165,18 @@ async def custom_prediction(
     try:
         logger.info(f"执行自定义预测，预测天数: {days}")
         
+        # 动态导入模块
+        import importlib
+        try:
+            data_gen = importlib.import_module('data_generator')
+            prediction_mod = importlib.import_module('prediction')
+            
+            generate_dataset = data_gen.generate_dataset
+            predict_future_scores = prediction_mod.predict_future_scores
+        except ImportError as e:
+            logger.error(f"导入模块失败: {e}")
+            raise HTTPException(status_code=500, detail=f"服务器配置错误: {e}")
+        
         # 这里可以处理用户传入的实时检测数据
         # 目前先使用默认数据集，实际应用中应该处理传入的data
         
@@ -163,8 +193,7 @@ async def custom_prediction(
         return {
             "history": prediction_result['history'],
             "forecast": prediction_result['forecast'],
-            "forecast_days": days,
-            "message": f"成功预测未来{days}天的数据"
+            "generated_at": datetime.now().isoformat()
         }
         
     except Exception as e:
@@ -183,33 +212,50 @@ async def get_charts_only():
     try:
         logger.info("生成仅图表数据...")
         
-        # 生成数据
+        # 动态导入模块
+        import importlib
+        try:
+            data_gen = importlib.import_module('data_generator')
+            prediction_mod = importlib.import_module('prediction')
+            line_chart_mod = importlib.import_module('charts.line_chart')
+            radar_chart_mod = importlib.import_module('charts.radar_chart')
+            
+            generate_dataset = data_gen.generate_dataset
+            predict_future_scores = prediction_mod.predict_future_scores
+            plot_prediction_chart = line_chart_mod.plot_prediction_chart
+            plot_defect_radar = radar_chart_mod.plot_defect_radar
+            plot_skill_radar = radar_chart_mod.plot_skill_radar
+            generate_sample_data = radar_chart_mod.generate_sample_data
+        except ImportError as e:
+            logger.error(f"导入模块失败: {e}")
+            raise HTTPException(status_code=500, detail=f"服务器配置错误: {e}")
+        
+        # 生成基础数据
         historical_data = generate_dataset()
         prediction_result = predict_future_scores(historical_data, days=5)
         
         # 生成图表
-        line_chart = plot_prediction_chart(
+        line_chart_base64 = plot_prediction_chart(
             prediction_result['history'], 
             prediction_result['forecast']
         )
         
         defect_data, skill_data = generate_sample_data()
-        defect_radar = plot_defect_radar(defect_data)
-        skill_radar = plot_skill_radar(skill_data)
+        defect_radar_base64 = plot_defect_radar(defect_data)
+        skill_radar_base64 = plot_skill_radar(skill_data)
         
         return {
-            "line_chart": line_chart,
-            "defect_radar": defect_radar,
-            "skill_radar": skill_radar,
+            "line_chart": line_chart_base64,
+            "defect_radar": defect_radar_base64,
+            "skill_radar": skill_radar_base64,
             "generated_at": datetime.now().isoformat()
         }
         
     except Exception as e:
-        logger.error(f"图表生成失败: {str(e)}")
+        logger.error(f"生成图表失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"图表生成异常: {str(e)}")
 
 
-# 健康检查接口
 @router.get("/predict/health")
 async def health_check():
     """
@@ -220,6 +266,16 @@ async def health_check():
     """
     try:
         # 执行简单的功能测试
+        import importlib
+        try:
+            data_gen = importlib.import_module('data_generator')
+            prediction_mod = importlib.import_module('prediction')
+            
+            generate_dataset = data_gen.generate_dataset
+            predict_future_scores = prediction_mod.predict_future_scores
+        except ImportError as e:
+            raise Exception(f"模块导入失败: {e}")
+        
         test_data = generate_dataset()
         test_result = predict_future_scores(test_data, days=1)
         
