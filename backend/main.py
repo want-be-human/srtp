@@ -7,7 +7,7 @@ from database import engine, Base
 import models
 
 # 导入API路由
-from api import detection, teacher, dashboard, prediction
+from api import detection, teacher, dashboard, predict
 
 # 创建数据库表
 models.Base.metadata.create_all(bind=engine)
@@ -31,7 +31,7 @@ app.add_middleware(
 app.include_router(detection.router, prefix="/api/v1", tags=["Detection"])
 app.include_router(teacher.router, prefix="/api/v1", tags=["AI Teacher"])
 app.include_router(dashboard.router, prefix="/api/v1", tags=["Dashboard"])
-app.include_router(prediction.router, prefix="/api/v1", tags=["Prediction"])
+app.include_router(predict.router, prefix="/api/v1", tags=["Predict"])
 
 
 @app.get("/")
