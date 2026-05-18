@@ -1,0 +1,940 @@
+# -*- coding: utf-8 -*-
+"""
+YOLO实时检测API
+功能：
+1. 在后端运行YOLO检测
+2. 通过API提供实时检测数据（不是视频流，前端用摄像头）
+3. 用户按键时保存分数
+"""
+
+import sys
+import os
+import threading
+import time
+from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import Optional, List
+from datetime import datetime
+import cv2
+import numpy as np
+import base64
+
+# 添加项目根目录到路径
+current_dir = os.path.dirname(os.path.abspath(__file__))
+backend_dir = os.path.dirname(current_dir)
+sys.path.insert(0, backend_dir)
+
+# 导入数据库相关模块
+from database import SessionLocal
+import models
+
+# 导入统一的缺陷类型定义
+try:
+    from defect_types import DEFECT_EN_TO_CN, TRUE_DEFECT_TYPES
+except ImportError:
+    DEFECT_EN_TO_CN = {
+        'Poor Weld': '焊接不良', 'Crack': '裂纹', 'Excess Rebar': '钢筋过剩',
+        'Good Weld': '良好焊缝', 'Porosity': '气孔', 'Spatter': '飞溅',
+        'Undercut': '咬边', 'Overlap': '焊瘤', 'Incomplete Fusion': '未熔合',
+        'Inclusion': '夹渣', 'Distortion': '变形', 'Surface Roughness': '表面粗糙',
+        'Excess Penetration': '焊穿', 'Misalignment': '错边', 'Arc Strike': '电弧擦伤',
+        'Discoloration': '变色', 'Tool Mark': '工具痕迹'
+    }
+
+# 导入YOLO检测服务（从backend/services/yolo/）
+try:
+    from services.yolo import IntegratedWeldDetector
+    YOLO_AVAILABLE = True
+except ImportError as e:
+    print(f"警告：无法导入YOLO模块: {e}")
+    IntegratedWeldDetector = None
+    YOLO_AVAILABLE = False
+
+router = APIRouter()
+
+# 全局变量
+capture_thread = None
+inference_thread = None
+is_detecting = False
+current_detection_data = None
+detector = None
+camera_cap = None
+data_lock = threading.Lock()
+latest_frame = None
+frame_lock = threading.Lock()
+detector_lock = threading.Lock()
+
+# ====== 可配置的默认参数（可通过 /video-stream 查询参数覆盖） ======
+# 目标摄像头抓帧FPS（实际取决于相机/驱动能力）
+TARGET_CAMERA_FPS = 60
+# MJPEG 推流默认FPS
+STREAM_DEFAULT_FPS = 30
+# JPEG 编码默认质量（10-95，越低压缩越狠、带宽越小）
+JPEG_DEFAULT_QUALITY = 70
+# 默认推流分辨率（编码前可选缩放，降低编码负载）
+DEFAULT_WIDTH = 640
+DEFAULT_HEIGHT = 360
+# 推理目标频率（每秒几次YOLO）
+INFERENCE_FPS = 6
+
+
+class StartDetectionRequest(BaseModel):
+    camera_id: Optional[int] = None
+    camera_url: Optional[str] = None  # IP摄像头URL，如 http://192.168.141.81:8081/
+
+
+class ScoreData(BaseModel):
+    """用户按键时保存的分数数据"""
+    total_score: float
+    smoothness_score: float
+    width_score: float
+    defect_score: float
+    width_mm: float
+    defect_type_name: str
+    timestamp: str
+    # 学生标识字段
+    student_id: Optional[str] = None
+    student_name: Optional[str] = None
+    batch_id: Optional[str] = None
+    notes: Optional[str] = None
+
+
+# 数据库依赖
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def capture_loop(camera_source):
+    """摄像头抓帧循环（后台线程）：仅负责读取相机帧并更新 latest_frame
+    
+    Args:
+        camera_source: 可以是整数(设备ID)或字符串(IP摄像头URL)
+    """
+    global is_detecting, camera_cap, latest_frame
+
+    try:
+        # 注意：抓帧线程不初始化YOLO，YOLO在推理线程初始化
+
+        # 打开摄像头（用于视频流推送和YOLO检测）
+        camera_cap = cv2.VideoCapture(camera_source)
+        if not camera_cap.isOpened():
+            print(f"✗ 无法打开摄像头 {camera_source}")
+            is_detecting = False
+            return
+
+        # 设置摄像头参数
+        camera_cap.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
+        camera_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
+        # 优先请求MJPG以降低USB摄像头压缩负载与延迟（若驱动支持）
+        try:
+            fourcc_fn = getattr(cv2, 'VideoWriter_fourcc', None)
+            if fourcc_fn is not None:
+                fourcc = fourcc_fn(*'MJPG')
+                camera_cap.set(cv2.CAP_PROP_FOURCC, fourcc)
+        except Exception:
+            pass
+        # 目标帧率（相机可能不完全遵循）
+        camera_cap.set(cv2.CAP_PROP_FPS, TARGET_CAMERA_FPS)
+        # 尝试减少缓冲，降低延迟（并非所有平台支持）
+        try:
+            camera_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+        except Exception:
+            pass
+
+        print(f"✓ 摄像头 {camera_source} 已打开，开始抓帧")
+
+        # 基于高精度计时的节流，减少抖动
+        next_frame_time = time.perf_counter()
+
+        while is_detecting:
+            ret, frame = camera_cap.read()
+            if not ret:
+                print("✗ 无法读取摄像头帧")
+                time.sleep(0.01)
+                continue
+
+            # 裁剪中心区域并放大（相当于3倍变焦）
+            h, w = frame.shape[:2]
+            crop_w, crop_h = w // 3, h // 3
+            start_x, start_y = (w - crop_w) // 2, (h - crop_h) // 2
+            cropped = frame[start_y:start_y+crop_h, start_x:start_x+crop_w]
+            frame = cv2.resize(cropped, (w, h))
+
+            # 更新最新帧（用于视频流 & 推理）
+            with frame_lock:
+                latest_frame = frame.copy()
+
+            # 控制抓帧节奏，趋近 TARGET_CAMERA_FPS
+            next_frame_time += 1.0 / max(1, TARGET_CAMERA_FPS)
+            sleep_dt = next_frame_time - time.perf_counter()
+            if sleep_dt > 0:
+                time.sleep(sleep_dt)
+
+    except Exception as e:
+        print(f"抓帧循环异常: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # 清理资源
+        if camera_cap:
+            camera_cap.release()
+            camera_cap = None
+        print("抓帧循环已停止")
+
+
+def inference_loop():
+    """YOLO推理循环（后台线程）：周期性读取 latest_frame 做推理，更新 current_detection_data"""
+    global is_detecting, detector, latest_frame, current_detection_data
+
+    try:
+        # 初始化YOLO检测器
+        if YOLO_AVAILABLE and IntegratedWeldDetector:
+            with detector_lock:
+                detector = IntegratedWeldDetector()
+            print("✓ YOLO检测器初始化成功（推理线程）")
+        else:
+            print("⚠ YOLO不可用（推理线程使用模拟数据）")
+            detector = None
+
+        # 推理频率控制
+        interval = 1.0 / max(1, INFERENCE_FPS)
+        next_t = time.perf_counter()
+
+        while is_detecting:
+            frame = None
+            with frame_lock:
+                if latest_frame is not None:
+                    frame = latest_frame.copy()
+
+            if frame is None:
+                time.sleep(0.01)
+            else:
+                try:
+                    if detector:
+                        # 使用真实YOLO检测
+                        with detector_lock:
+                            results = detector.process_frame(frame)
+
+                        detection_count = results.get("detection_count", 0)
+                        detections = results.get("detections", [])
+                        if detection_count == 0:
+                            defect_name = "无缺陷"
+                        else:
+                            # 优先使用中文名称，如果没有则将英文转换为中文
+                            defect_name = detections[0].get("class_name_cn", "未知") if detections else "未知"
+                            if defect_name == "未知":
+                                en_name = detections[0].get("class_name", "未知")
+                                defect_name = DEFECT_EN_TO_CN.get(en_name, en_name)
+
+                        detection_data = {
+                            "smoothness": results.get("smoothness_score", 0),
+                            "width": results.get("width_score", 0),
+                            "defect_type": results.get("defect_score", 0),
+                            "total_score": results.get("total_score", 0),
+                            "timestamp": time.time(),
+                            "actual_width": results.get("width_mm", 0),
+                            "defect_type_name": defect_name,
+                            "detected_defects": detections,
+                            "top_y": results.get("top_y"),
+                            "bottom_y": results.get("bottom_y"),
+                            "detection_count": detection_count,
+                            "debug_info": results.get("debug_info", "")
+                        }
+                    else:
+                        # 使用模拟数据
+                        import random
+                        smoothness = random.randint(70, 95)
+                        width = random.randint(70, 95)
+                        defect = random.randint(70, 95)
+                        detection_data = {
+                            "smoothness": smoothness,
+                            "width": width,
+                            "defect_type": defect,
+                            "total_score": round(smoothness * 0.3 + width * 0.3 + defect * 0.4, 2),
+                            "timestamp": time.time(),
+                            "actual_width": round(random.uniform(4.0, 7.0), 2),
+                            "defect_type_name": random.choice(["无缺陷", "气孔", "裂纹", "夹渣", "咬边", "未熔合", "焊瘤", "飞溅"]),
+                            "detected_defects": []
+                        }
+
+                    # 更新当前检测数据
+                    with data_lock:
+                        current_detection_data = detection_data
+
+                except Exception as e:
+                    print(f"推理出错: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+            # 节流推理频率
+            next_t += interval
+            dt = next_t - time.perf_counter()
+            if dt > 0:
+                time.sleep(dt)
+
+    except Exception as e:
+        print(f"推理循环异常: {e}")
+        import traceback
+        traceback.print_exc()
+    finally:
+        # 释放YOLO资源
+        with detector_lock:
+            detector = None
+        print("推理循环已停止")
+
+
+@router.post("/start-yolo")
+async def start_yolo_detection(request: StartDetectionRequest):
+    """启动YOLO检测（后台运行）"""
+    global is_detecting
+
+    try:
+        if is_detecting:
+            return {
+                "status": "already_running",
+                "message": "YOLO检测已在运行中"
+            }
+
+        # 启动抓帧与推理线程
+        is_detecting = True
+        
+        # 确定摄像头来源（优先使用 URL）
+        camera_source = request.camera_url if request.camera_url else (request.camera_id if request.camera_id is not None else 0)
+        
+        # 抓帧线程
+        cap_t = threading.Thread(
+            target=capture_loop,
+            args=(camera_source,),
+            daemon=True
+        )
+        cap_t.start()
+        # 推理线程
+        inf_t = threading.Thread(
+            target=inference_loop,
+            daemon=True
+        )
+        inf_t.start()
+
+        # 保存线程句柄
+        global capture_thread, inference_thread
+        capture_thread = cap_t
+        inference_thread = inf_t
+
+        # 等待一下让检测器初始化
+        time.sleep(1)
+
+        return {
+            "status": "success",
+            "message": "YOLO检测已启动",
+            "camera_source": camera_source
+        }
+
+    except Exception as e:
+        is_detecting = False
+        raise HTTPException(
+            status_code=500,
+            detail=f"启动YOLO检测失败: {str(e)}"
+        )
+
+
+@router.post("/stop-yolo")
+async def stop_yolo_detection():
+    """停止YOLO检测"""
+    global is_detecting, current_detection_data
+
+    try:
+        if not is_detecting:
+            return {
+                "status": "not_running",
+                "message": "YOLO检测未在运行"
+            }
+
+        # 停止检测
+        is_detecting = False
+
+        # 等待线程结束
+        global capture_thread, inference_thread
+        if inference_thread:
+            inference_thread.join(timeout=3)
+        if capture_thread:
+            capture_thread.join(timeout=3)
+
+        with data_lock:
+            current_detection_data = None
+
+        return {
+            "status": "success",
+            "message": "YOLO检测已停止"
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"停止YOLO检测失败: {str(e)}"
+        )
+
+
+@router.get("/yolo-data")
+async def get_yolo_data():
+    """获取最新的YOLO检测数据"""
+    global current_detection_data, is_detecting
+
+    try:
+        if not is_detecting:
+            return {
+                "status": "not_running",
+                "data": None
+            }
+
+        with data_lock:
+            if current_detection_data:
+                return {
+                    "status": "success",
+                    "data": current_detection_data
+                }
+            else:
+                return {
+                    "status": "no_data",
+                    "data": None,
+                    "message": "暂无检测数据"
+                }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取YOLO数据失败: {str(e)}"
+        )
+
+
+@router.post("/save-score")
+async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
+    """
+    保存单次检测分数到数据库
+    当用户按下按键时，前端调用此接口保存那一刻的分数
+    """
+    try:
+        # 解析时间戳
+        try:
+            timestamp = datetime.fromisoformat(data.timestamp.replace('Z', '+00:00'))
+        except:
+            timestamp = datetime.now()
+
+        # 创建数据库记录
+        db_record = models.WeldingRecord(
+            timestamp=timestamp,
+            # 学生标识
+            student_id=data.student_id,
+            student_name=data.student_name,
+            batch_id=data.batch_id,
+            # 检测分数
+            smoothness_score=data.smoothness_score,
+            spacing_score=data.width_score,  # width_score 映射到 spacing_score
+            defect_type_score=data.defect_score,
+            total_score=data.total_score,
+            # 额外信息
+            actual_width=data.width_mm,
+            defect_type_name=data.defect_type_name,
+            notes=data.notes
+        )
+
+        db.add(db_record)
+        db.commit()
+        db.refresh(db_record)
+
+        print(f"✓ 分数已保存到数据库: ID={db_record.id}, 学生={data.student_id or '未知'}, 总分={data.total_score}")
+
+        return {
+            "status": "success",
+            "message": "分数已保存到数据库",
+            "database_id": db_record.id,
+            "data": data.dict()
+        }
+
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"保存分数失败: {str(e)}"
+        )
+
+
+@router.get("/recent-scores")
+async def get_recent_scores(limit: int = 10, db: SessionLocal = Depends(get_db)):
+    """获取最近的检测分数记录"""
+    try:
+        records = db.query(models.WeldingRecord).order_by(
+            models.WeldingRecord.timestamp.desc()
+        ).limit(limit).all()
+
+        scores = []
+        for r in records:
+            scores.append({
+                "id": r.id,
+                "timestamp": r.timestamp.isoformat() if r.timestamp else None,
+                "student_id": r.student_id,
+                "student_name": r.student_name,
+                "batch_id": r.batch_id,
+                "total_score": r.total_score,
+                "smoothness_score": r.smoothness_score,
+                "width_score": r.spacing_score,  # 映射回 width_score
+                "defect_score": r.defect_type_score,
+                "actual_width": r.actual_width,
+                "defect_type_name": r.defect_type_name
+            })
+
+        return {
+            "status": "success",
+            "scores": scores,
+            "count": len(scores)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取分数记录失败: {str(e)}"
+        )
+
+
+@router.get("/student-comparison")
+async def get_student_comparison(
+    batch_id: Optional[str] = None,
+    db: SessionLocal = Depends(get_db)
+):
+    """
+    获取学生批次比较数据
+    用于PDF报告生成：按学生ID分组，比较不同学生的焊接质量
+    """
+    try:
+        from sqlalchemy import func as sql_func
+
+        # 构建查询
+        query = db.query(
+            models.WeldingRecord.student_id,
+            models.WeldingRecord.student_name,
+            models.WeldingRecord.batch_id,
+            sql_func.count(models.WeldingRecord.id).label('detection_count'),
+            sql_func.avg(models.WeldingRecord.total_score).label('avg_total_score'),
+            sql_func.avg(models.WeldingRecord.smoothness_score).label('avg_smoothness'),
+            sql_func.avg(models.WeldingRecord.spacing_score).label('avg_width'),
+            sql_func.avg(models.WeldingRecord.defect_type_score).label('avg_defect'),
+            sql_func.max(models.WeldingRecord.total_score).label('max_score'),
+            sql_func.min(models.WeldingRecord.total_score).label('min_score')
+        ).filter(
+            models.WeldingRecord.student_id.isnot(None)
+        )
+
+        if batch_id:
+            query = query.filter(models.WeldingRecord.batch_id == batch_id)
+
+        query = query.group_by(
+            models.WeldingRecord.student_id,
+            models.WeldingRecord.student_name,
+            models.WeldingRecord.batch_id
+        ).order_by(sql_func.avg(models.WeldingRecord.total_score).desc())
+
+        results = query.all()
+
+        comparison_data = []
+        for r in results:
+            comparison_data.append({
+                "student_id": r.student_id,
+                "student_name": r.student_name or "未知学生",
+                "batch_id": r.batch_id,
+                "detection_count": r.detection_count,
+                "avg_total_score": round(r.avg_total_score, 1) if r.avg_total_score else 0,
+                "avg_smoothness": round(r.avg_smoothness, 1) if r.avg_smoothness else 0,
+                "avg_width": round(r.avg_width, 1) if r.avg_width else 0,
+                "avg_defect": round(r.avg_defect, 1) if r.avg_defect else 0,
+                "max_score": round(r.max_score, 1) if r.max_score else 0,
+                "min_score": round(r.min_score, 1) if r.min_score else 0
+            })
+
+        return {
+            "status": "success",
+            "batch_id": batch_id,
+            "comparison_data": comparison_data,
+            "total_students": len(comparison_data)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取学生比较数据失败: {str(e)}"
+        )
+
+
+@router.get("/batch-list")
+async def get_batch_list(db: SessionLocal = Depends(get_db)):
+    """获取所有批次ID列表"""
+    try:
+        from sqlalchemy import distinct
+
+        batches = db.query(distinct(models.WeldingRecord.batch_id)).filter(
+            models.WeldingRecord.batch_id.isnot(None)
+        ).all()
+
+        batch_list = [b[0] for b in batches if b[0]]
+
+        return {
+            "status": "success",
+            "batches": batch_list,
+            "count": len(batch_list)
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取批次列表失败: {str(e)}"
+        )
+
+
+class FrameDetectionRequest(BaseModel):
+    """前端发送的帧数据"""
+    frame_data: str  # base64编码的图像
+
+
+def generate_video_stream(fps: int, quality: int, width: int, height: int):
+    """生成MJPEG视频流 - 使用 capture_loop 捕获的帧
+
+    参数：
+      - fps: 目标推流帧率
+      - quality: JPEG编码质量（10-95）
+      - width, height: 编码前缩放到此分辨率
+    """
+    global latest_frame, current_detection_data, is_detecting
+
+    # 预设下一帧发送时间，确保稳定帧间隔
+    frame_interval = 1.0 / max(1, fps)
+    next_send_time = time.perf_counter()
+
+    while True:
+        if not is_detecting or latest_frame is None:
+            # 如果没有检测在运行，返回黑屏
+            black_frame = np.zeros((height, width, 3), dtype=np.uint8)
+            cv2.putText(black_frame, "Camera not started", (150, 240),
+                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+            ret, buffer = cv2.imencode('.jpg', black_frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            if ret:
+                frame_bytes = buffer.tobytes()
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+            # 维持节奏
+            next_send_time += frame_interval
+            sleep_dt = next_send_time - time.perf_counter()
+            if sleep_dt > 0:
+                time.sleep(sleep_dt)
+            continue
+
+        # 获取最新帧的副本
+        with frame_lock:
+            display_frame = latest_frame.copy()
+
+        # 按需缩放，降低编码负载
+        if display_frame.shape[1] != width or display_frame.shape[0] != height:
+            try:
+                display_frame = cv2.resize(display_frame, (width, height), interpolation=cv2.INTER_AREA)
+            except Exception:
+                pass
+
+        # 在帧上绘制检测结果 - 自定义绘制（解决top_y为None和中文显示问题）
+        with data_lock:
+            if current_detection_data:
+                font = cv2.FONT_HERSHEY_SIMPLEX
+
+                # 1. 绘制总分
+                total_score = current_detection_data.get('total_score', 0)
+                score_color = (0, 255, 0) if total_score >= 80 else (0, 165, 255) if total_score >= 60 else (0, 0, 255)
+                cv2.putText(display_frame, f'Total Score: {total_score:.1f}',
+                          (10, 40), font, 1.0, score_color, 3)
+
+                # 2. 绘制各模块得分
+                smoothness = current_detection_data.get("smoothness", 0)
+                cv2.putText(display_frame, f'Smoothness: {smoothness:.1f}',
+                          (10, 80), font, 0.6, (255, 255, 255), 2)
+
+                width_mm = current_detection_data.get("actual_width", 0)
+                width_score = current_detection_data.get("width", 0)
+                cv2.putText(display_frame, f'Width: {width_mm:.1f}mm ({width_score:.1f})',
+                          (10, 110), font, 0.6, (255, 255, 255), 2)
+
+                defect_score = current_detection_data.get("defect_type", 0)
+                detection_count = current_detection_data.get("detection_count", 0)
+                cv2.putText(display_frame, f'Defect: {defect_score:.1f} ({detection_count} found)',
+                          (10, 140), font, 0.6, (255, 255, 255), 2)
+
+                # 3. 绘制焊缝宽度标记线（如果有）
+                top_y = current_detection_data.get("top_y")
+                bottom_y = current_detection_data.get("bottom_y")
+                if top_y is not None and bottom_y is not None:
+                    cv2.line(display_frame, (0, top_y), (display_frame.shape[1], top_y), (0, 0, 255), 3)
+                    cv2.line(display_frame, (0, bottom_y), (display_frame.shape[1], bottom_y), (0, 0, 255), 3)
+                    cv2.putText(display_frame, f'Top: {top_y}', (10, top_y-10 if top_y > 20 else top_y+20),
+                              font, 0.5, (0, 0, 255), 2)
+                    cv2.putText(display_frame, f'Bottom: {bottom_y}', (10, bottom_y+20),
+                              font, 0.5, (0, 0, 255), 2)
+
+                # 4. 绘制缺陷检测框
+                detections = current_detection_data.get("detected_defects", [])
+                for detection in detections:
+                    box = detection.get("box", [])
+                    if len(box) == 4:
+                        x1, y1, x2, y2 = map(int, box)
+                        class_name = detection.get("class_name", "Unknown")
+                        confidence = detection.get("confidence", 0)
+
+                        # 选择颜色
+                        color = (0, 255, 0) if "Good" in class_name else (0, 0, 255)
+
+                        # 绘制框和标签
+                        cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
+                        label = f'{class_name}: {confidence:.2f}'
+                        cv2.putText(display_frame, label, (x1, y1-10 if y1 > 20 else y1+20),
+                                  font, 0.6, color, 2)
+
+        # 编码为JPEG
+        ret, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        if not ret:
+            continue
+
+        frame_bytes = buffer.tobytes()
+
+        # 返回MJPEG格式
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+
+        # 维持推流帧率
+        next_send_time += frame_interval
+        sleep_dt = next_send_time - time.perf_counter()
+        if sleep_dt > 0:
+            time.sleep(sleep_dt)
+
+
+@router.get("/video-stream")
+async def video_stream(
+    fps: int = Query(STREAM_DEFAULT_FPS, ge=1, le=120, description="目标推流FPS"),
+    quality: int = Query(JPEG_DEFAULT_QUALITY, ge=10, le=95, description="JPEG质量(10-95)"),
+    width: int = Query(DEFAULT_WIDTH, ge=160, le=1920, description="编码宽度"),
+    height: int = Query(DEFAULT_HEIGHT, ge=120, le=1080, description="编码高度"),
+):
+    """MJPEG视频流接口（支持通过查询参数调整FPS/质量/分辨率）"""
+    return StreamingResponse(
+        generate_video_stream(fps=fps, quality=quality, width=width, height=height),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
+
+
+@router.post("/detect-frame")
+async def detect_frame(request: FrameDetectionRequest):
+    """
+    接收前端发送的摄像头帧，进行YOLO检测
+    前端通过canvas捕获video帧，转为base64发送
+    """
+    global detector
+
+    try:
+        # 初始化检测器（如果还没初始化）
+        if detector is None and YOLO_AVAILABLE and IntegratedWeldDetector:
+            detector = IntegratedWeldDetector()
+            print("✓ YOLO检测器初始化成功")
+
+        # 解码base64图像
+        try:
+            # 移除data:image前缀（如果有）
+            image_data = request.frame_data
+            if ',' in image_data:
+                image_data = image_data.split(',')[1]
+
+            # 解码base64
+            image_bytes = base64.b64decode(image_data)
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                raise ValueError("无法解码图像")
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"图像解码失败: {str(e)}"
+            )
+
+        # 进行YOLO检测
+        if detector:
+            try:
+                results = detector.detect_frame(frame)
+
+                detection_data = {
+                    "smoothness": results.get("smoothness_score", 0),
+                    "width": results.get("width_score", 0),
+                    "defect_type": results.get("defect_score", 0),
+                    "total_score": results.get("total_score", 0),
+                    "timestamp": time.time(),
+                    "actual_width": results.get("width_mm", 0),
+                    "defect_type_name": results.get("defect_type", "未知"),
+                    "detected_defects": results.get("detections", [])
+                }
+
+                return {
+                    "status": "success",
+                    "data": detection_data
+                }
+
+            except Exception as e:
+                print(f"YOLO检测失败: {e}")
+                import traceback
+                traceback.print_exc()
+                # 如果YOLO检测失败，返回模拟数据
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"YOLO检测失败: {str(e)}"
+                )
+        else:
+            # YOLO不可用，返回模拟数据
+            import random
+            smoothness = random.randint(70, 95)
+            width = random.randint(70, 95)
+            defect = random.randint(70, 95)
+
+            detection_data = {
+                "smoothness": smoothness,
+                "width": width,
+                "defect_type": defect,
+                "total_score": round(smoothness * 0.3 + width * 0.3 + defect * 0.4, 2),
+                "timestamp": time.time(),
+                "actual_width": round(random.uniform(4.0, 7.0), 2),
+                "defect_type_name": random.choice(["无缺陷", "气孔", "裂纹"]),
+                "detected_defects": []
+            }
+
+            return {
+                "status": "success",
+                "data": detection_data,
+                "note": "YOLO不可用，使用模拟数据"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"检测失败: {str(e)}"
+        )
+
+
+class ImageDetectionRequest(BaseModel):
+    """前端发送的图片数据"""
+    image_data: str  # base64编码的图像
+
+
+@router.post("/detect-image")
+async def detect_image(request: ImageDetectionRequest):
+    """
+    接收前端上传的图片，进行YOLO检测
+    用于上传图片检测功能
+    """
+    global detector
+
+    try:
+        # 初始化检测器（如果还没初始化）
+        if detector is None and YOLO_AVAILABLE and IntegratedWeldDetector:
+            detector = IntegratedWeldDetector()
+            print("✓ YOLO检测器初始化成功（图片检测）")
+
+        # 解码base64图像
+        try:
+            # 移除data:image前缀（如果有）
+            image_data = request.image_data
+            if ',' in image_data:
+                image_data = image_data.split(',')[1]
+
+            # 解码base64
+            image_bytes = base64.b64decode(image_data)
+            nparr = np.frombuffer(image_bytes, np.uint8)
+            frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+            if frame is None:
+                raise ValueError("无法解码图像")
+
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"图像解码失败: {str(e)}"
+            )
+
+        # 进行YOLO检测
+        if detector:
+            try:
+                results = detector.process_frame(frame)
+
+                detection_data = {
+                    "smoothness": results.get("smoothness_score", 0),
+                    "width": results.get("width_score", 0),
+                    "defect_type": results.get("defect_score", 0),
+                    "total_score": results.get("total_score", 0),
+                    "timestamp": time.time(),
+                    "actual_width": results.get("width_mm", 0),
+                    "defect_type_name": results.get("defect_type", "未知"),
+                    "detected_defects": results.get("detections", []),
+                    "detection_count": results.get("detection_count", 0)
+                }
+
+                return {
+                    "status": "success",
+                    "data": detection_data
+                }
+
+            except Exception as e:
+                print(f"YOLO检测失败: {e}")
+                import traceback
+                traceback.print_exc()
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"YOLO检测失败: {str(e)}"
+                )
+        else:
+            # YOLO不可用，返回模拟数据
+            import random
+            smoothness = random.randint(70, 95)
+            width = random.randint(70, 95)
+            defect = random.randint(70, 95)
+
+            detection_data = {
+                "smoothness": smoothness,
+                "width": width,
+                "defect_type": defect,
+                "total_score": round(smoothness * 0.3 + width * 0.3 + defect * 0.4, 2),
+                "timestamp": time.time(),
+                "actual_width": round(random.uniform(4.0, 7.0), 2),
+                "defect_type_name": random.choice(["无缺陷", "气孔", "裂纹"]),
+                "detected_defects": []
+            }
+
+            return {
+                "status": "success",
+                "data": detection_data,
+                "note": "YOLO不可用，使用模拟数据"
+            }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"检测失败: {str(e)}"
+        )
+
+
+# 清理资源的回调
+@router.on_event("shutdown")
+async def shutdown_event():
+    """应用关闭时清理资源"""
+    global is_detecting, camera_cap
+    is_detecting = False
+    if camera_cap:
+        camera_cap.release()

@@ -1,0 +1,27 @@
+{
+  "yolo_model_path": "../YOLO/models/best.pt",
+  "confidence_threshold": 0.5,
+  "iou_threshold": 0.45,
+  "scoring_weights": {
+    "smoothness_weight": 0.3,
+    "width_weight": 0.3,
+    "defect_weight": 0.4
+  },
+  "width_thresholds": {
+    "min_width_mm": 3.0,
+    "max_width_mm": 8.0,
+    "optimal_width_mm": 5.5
+  },
+  "optimization": {
+    "enable_cache": true,
+    "max_cache_size": 10,
+    "yolo_imgsz": 480,
+    "cv2_threads": 4
+  },
+  "display": {
+    "window_width": 1280,
+    "window_height": 720,
+    "font_scale": 0.6,
+    "line_thickness": 2
+  }
+}
