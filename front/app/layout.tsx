@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { DataTreeProvider } from '@/components/data-tree/data-tree-context'
+import { AuthProvider } from '@/contexts/AuthContext'
 
 export const metadata: Metadata = {
   title: '智能检测教学',
@@ -13,11 +14,13 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
-      <body>
-        <DataTreeProvider>
-          {children}
-        </DataTreeProvider>
+    <html lang="zh-CN" suppressHydrationWarning>
+      <body suppressHydrationWarning>
+        <AuthProvider>
+          <DataTreeProvider>
+            {children}
+          </DataTreeProvider>
+        </AuthProvider>
       </body>
     </html>
   )

@@ -3,11 +3,13 @@
 import type React from "react"
 
 import { useState, useEffect } from "react"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Home, Settings, User, Activity, TrendingUp, Database, FileDown, Eye, Brain, GraduationCap, GitBranch } from "lucide-react"
+import { Home, Settings, User, Activity, TrendingUp, Database, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut } from "lucide-react"
 import Image from "next/image"
 import { API_ENDPOINTS } from "@/lib/api"
+import { useAuth } from "@/contexts/AuthContext"
 import { LessonPlanExportContent } from "../components/lesson-plan/lesson-plan-export"
 import { AITeacherChatContent } from "../components/ai-teacher/ai-teacher-chat"
 import { PredictionDashboardContent } from "../components/prediction/prediction-dashboard"
@@ -39,6 +41,20 @@ export default function WeldingDetectionSystem() {
     avgScore: 0,
     batchCount: 0,
   })
+  const router = useRouter()
+  const { currentUser, isHydrated, logout } = useAuth()
+
+  // 登录 gate：未登录用户跳到 /login
+  useEffect(() => {
+    if (isHydrated && !currentUser) {
+      router.replace("/login")
+    }
+  }, [currentUser, isHydrated, router])
+
+  const handleLogout = () => {
+    logout()
+    router.replace("/login")
+  }
 
   // 从后端获取真实数据
   useEffect(() => {
@@ -154,6 +170,11 @@ export default function WeldingDetectionSystem() {
     }
   }
 
+  // 登录 gate 渲染：hydrate 前与未登录时返回空，等 useEffect 把用户跳到 /login
+  if (!isHydrated || !currentUser) {
+    return null
+  }
+
   return (
     <div className={`h-screen ${getBackgroundColor()} flex overflow-hidden`}>
       {/* 左侧导航栏 */}
@@ -216,7 +237,26 @@ export default function WeldingDetectionSystem() {
           </div>
 
           <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-4 text-gray-300"></div>
+            {currentUser && (
+              <div className="flex items-center space-x-2 text-gray-300">
+                <User className="w-5 h-5 text-blue-300" />
+                <div className="leading-tight">
+                  <div className="text-white text-sm font-medium">{currentUser.name}</div>
+                  <div className="text-xs text-gray-400">
+                    {currentUser.student_id}
+                    {currentUser.batch_id ? ` · ${currentUser.batch_id}` : ""}
+                  </div>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="ml-2 flex items-center space-x-1 px-2 py-1 rounded hover:bg-slate-700 hover:text-white transition-colors text-xs"
+                  title="登出"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span>登出</span>
+                </button>
+              </div>
+            )}
             <div className="flex items-center space-x-4 text-gray-300">
               <button
                 onClick={() => setActiveModule("settings")}

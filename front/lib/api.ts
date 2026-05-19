@@ -43,6 +43,9 @@ export const API_ENDPOINTS = {
   // 学生比较
   STUDENT_COMPARISON: `${API_BASE_URL}/api/v1/student-comparison`,
   BATCH_LIST: `${API_BASE_URL}/api/v1/batch-list`,
+
+  // 登录（C1）
+  AUTH_LOGIN: `${API_BASE_URL}/api/v1/auth/login`,
 };
 
 export default API_BASE_URL;

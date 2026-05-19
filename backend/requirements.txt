@@ -37,6 +37,9 @@ seaborn==0.13.2
 # 图像处理
 opencv-python==4.9.0.80
 
+# 登录密码哈希
+bcrypt>=4.0,<5.0
+
 # PDF生成
 reportlab==4.0.8
 

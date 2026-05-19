@@ -13,7 +13,7 @@ from database import engine, Base
 import models
 
 # 导入API路由
-from api import teacher, dashboard, predict, lesson_plan, yolo_realtime
+from api import teacher, dashboard, predict, lesson_plan, yolo_realtime, auth
 
 # 创建数据库表
 models.Base.metadata.create_all(bind=engine)
@@ -39,6 +39,7 @@ app.include_router(teacher.router, prefix="/api/v1", tags=["AI Teacher"])
 app.include_router(dashboard.router, prefix="/api/v1", tags=["Dashboard"])
 app.include_router(predict.router, prefix="/api/v1", tags=["Predict"])
 app.include_router(lesson_plan.router, prefix="/api/v1", tags=["Lesson Plan"])
+app.include_router(auth.router, prefix="/api/v1", tags=["Auth"])
 
 
 @app.get("/")

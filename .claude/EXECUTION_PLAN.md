@@ -62,10 +62,14 @@ A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完
 
 依赖 B1 完成（演示链路稳了再加身份层），按依赖顺序：
 
-- **C1 演示登录**
-  - 后端：新建 `backend/api/auth.py`，3 个预设账号 `student_a / student_b / teacher_demo`；POST `/api/v1/auth/login` 返回简单 token 或 session
-  - 前端：新建 `front/app/login/page.tsx`、`front/contexts/AuthContext.tsx`、`front/lib/auth.ts`
-  - 左侧导航新增「登录」（决策 #10）
+- **C1 学号 + 密码登录**（真实场景，非 demo 账号选择器）
+  - 数据库：新增 `students` 表（`student_id` 唯一、`password_hash` bcrypt、`batch_id`、`created_at`）
+  - 后端：`backend/api/auth.py` 暴露 `POST /api/v1/auth/login`（学号+密码，bcrypt 校验，错误统一「学号或密码错误」）
+  - 预播种脚本：`backend/scripts/seed_students.py` 写入班级名单，初始密码统一 `123456`；学校官网接入后改写本脚本即可
+  - 前端：独立 `/login` 路由（`front/app/login/page.tsx`），表单 = 学号 + 密码；`front/contexts/AuthContext.tsx` 暴露 `login()` / `logout()` / `currentUser`
+  - 路由 gate：根路由 `/`（`front/app/page.tsx`）未登录时 `router.replace("/login")`；登录后顶部右上角显示学号、姓名、班级与登出按钮
+  - 不在侧边栏放「登录」入口（登录是 gate，不是模块）
+  - 没有 token / session / 强制鉴权后端其它端点：演示阶段够用，后续要真鉴权再补 JWT，不破坏接口契约
 
 - **C2 学生数据归属**
   - 前端 save_score 调用链统一从 AuthContext 取 `student_id / student_name`

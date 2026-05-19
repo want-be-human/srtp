@@ -6,11 +6,30 @@ const NS = "srtp:"
 
 export const StorageKey = {
   CAMERA_URL: `${NS}camera_url`,
-  // 后续 Phase B/C/D 用到的键统一在这里登记
-  // AUTH_USER: `${NS}auth_user`,
+  AUTH_USER: `${NS}auth_user`,
+  // 后续 Phase D 用到的键统一在这里登记
   // DEMO_SAFE_MODE: `${NS}demo_safe_mode`,
   // TTS_MUTED: `${NS}tts_muted`,
 } as const
+
+// JSON helper：方便存复杂对象。失败时静默返回 fallback。
+export function getJSON<T>(key: string, fallback: T): T {
+  const raw = getString(key, "")
+  if (!raw) return fallback
+  try {
+    return JSON.parse(raw) as T
+  } catch {
+    return fallback
+  }
+}
+
+export function setJSON(key: string, value: unknown): void {
+  try {
+    setString(key, JSON.stringify(value))
+  } catch {
+    // JSON 序列化失败（含循环引用等）：静默忽略
+  }
+}
 
 function hasStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined"
