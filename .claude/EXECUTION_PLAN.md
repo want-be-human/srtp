@@ -69,7 +69,8 @@ A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完
 
 - **C2 学生数据归属**
   - 前端 save_score 调用链统一从 AuthContext 取 `student_id / student_name`
-  - `WeldingRecord` 表字段已存在，无需迁移
+  - `WeldingRecord` 表字段 `student_id / student_name / batch_id` 已经存在且 nullable，**无需迁移**
+  - 旧记录的 `student_id IS NULL` 问题留给 D3 脚本批量改为 `student_demo`
   - 验证：保存后能从 `/student-comparison` 看到分组
 
 - **C3 数据树用户隔离**
@@ -97,6 +98,7 @@ A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完
 
 - **D3 演示数据预播种**
   - 新建 `backend/scripts/seed_demo_data.py`：3-4 个学生 × 各 15-30 条历史检测，分数曲线合理（有上升 + 波动），不同学生有不同短板（A 偏宽度差、B 偏缺陷多）
+  - 顺带：脚本里加一条 `UPDATE welding_records SET student_id='student_demo' WHERE student_id IS NULL`，把 C2 上线前的孤立旧记录归到 `student_demo`，避免 PK / 对比页出现「未指定学生」分组
 
 - **D4 教学/严格模式切换**
   - 后端 detection runtime 暴露 confidence 可写状态（GET/POST `/api/v1/runtime/confidence`）
