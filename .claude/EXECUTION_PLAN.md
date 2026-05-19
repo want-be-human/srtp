@@ -1,102 +1,154 @@
-# 焊育智眸 国赛执行计划（决策已锁定）
+# 焊育智眸 国赛执行计划（2026-05-19 v3）
 
-> 这是「已经决策完成」的执行计划。原 UPGRADE_PROPOSAL.md 的 11 个待拍板问题已在 2026-05-19 全部答复，本文反映最终方案。  
-> 与 [`docs/国赛11天升级规划与代码梳理.md`](../docs/国赛11天升级规划与代码梳理.md)（团队 11 天总规划，下文称「原规划」）配套使用：原规划定整体方向，本文档定**谁做什么、按什么顺序、什么时候 push**。
+> v3 修正：v1/v2 把「我负责」错读为「用户亲自实现」，又把 P0/P1（除 3D）误塞给 Claude。  
+> **实际上用户是项目负责人，把 4 块任务交给 Claude，其余（P0/P1 除 3D）由团队其他成员负责。**
 
-冻结日：2026-05-28（国赛）。本文最后一次修订：2026-05-19。
+冻结日：2026-05-28（国赛）。本文最后修订：2026-05-19。
 
 ---
 
 ## 1. 责任分工
 
-| 工作项 | 负责人 |
+| 工作项 | 实际负责人 |
 |---|---|
-| 有线摄像头接入（硬件 + 联调） | **用户** |
-| 原规划 P2 = 演示登录 + 学生数据归属 + 数据树 PK + 学生对比页 | **用户** |
-| 3D 重构展示（原规划 P1 方向一） | **团队其他成员**（用户不负责，Claude 不负责） |
-| 原规划 P0/P1 中 3D / P2 之外的所有部分 | **Claude** |
-| 本提案新增的非 P2 部分（TTS / 教学严格模式 / 演示降级模式 / mock 清理 / 数据预播种 / 标准对齐文案） | **Claude**，除非用户在做 P2 时顺带完成 |
-| 提案中的缺陷热图（最低优先级） | **Claude**，最后做 |
+| 决策、验收、对接需求 | 用户 |
+| 实物硬件（接线、调光、装相机） | 用户 |
+| 3D 重构展示（建模 + 资产） | 团队其他成员 |
+| **原规划 P0**（系统稳定性兜底，除 3D 外的硬件配置化、ROI、缺陷名兜底 sweep、PDF 本地规则化、AI 兜底巡查等） | **团队其他成员**（不是 Claude） |
+| **原规划 P1 除 3D 部分** | **团队其他成员**（不是 Claude） |
+| **有线摄像头接入（代码侧 + 联调）** | **Claude** |
+| **原规划 P2 = 演示登录 + 学生数据归属 + 数据树 PK + 学生对比页** | **Claude** |
+| **提案新增非 P2 部分 = TTS / 教学严格模式 / 演示降级模式 / mock 清理 / 演示数据预播种 / 标准对齐文案** | **Claude**（能在 P2 中顺带完成则顺带） |
+| 提案中的缺陷热图 | **Claude**，最后做 |
 
-补充约定：用户在做 P2 / 有线摄像头时如果顺带把上表中 Claude 的某项完成了，就标注后从 Claude 待办里划掉。
+> Claude 不主动接 P0/P1 工作。如果在做自己范围内的代码时发现 P0/P1 的明显问题（例如某个端点必崩），告知用户、由用户分配，不擅自修。  
+> 已经在 simplify 阶段顺带做掉的 P0/P1 局部（`teacher.py` 单例 + timeout + fallback、`defect_name_safe()` 工具函数、`yolo_config.json` 接通、YOLO 加载链修复）属于历史既成事实，已推送、不回滚。后续不再继续 P0/P1 工作。
 
 ---
 
-## 2. 阶段排序（从现在到 05-28）
+## 2. 阶段排序
 
-### Phase A — 深度 /simplify（先）
+### Phase A — 深度 /simplify（进行中）
 
-目的：把第一轮 /simplify 没碰的、风险中等的改动也清理掉，为后续功能开发腾出干净的代码地基。
+**已完成并双推**：
 
-范围（候选）：
-- `front/app/page.tsx` 中的重复 fetch 逻辑抽到统一 `lib/fetcher.ts`，减少 try/catch 重复
-- `front/components/lesson-plan/lesson-plan-export.tsx` 175 条 mock 文案瘦身（保留 1-2 条作为「无数据时的 placeholder」）
-- `front/components/prediction/prediction-dashboard.tsx` 中 `DEFAULT_MOCK_*` 兜底数据评估：要么明确标「示例数据」UI，要么按用户决策 #7 删除
-- `backend/api/predict.py` 中 `/predict/ai-radar-data` 的 mock 数据直接删（决策 #7）
-- `backend/api/lesson_plan.py`、`backend/api/predict.py` 中的 `except Exception:` 收紧成具体异常
-- `backend/api/teacher.py` 改造完成后，`backend/ai_analysis.py` 内部的 client 是否同样能复用单例（评估即可，不一定改）
-- `front/components/data-tree/` 类型在 `front/types/` 集中
-- 删除 `front/pnpm-lock.yaml` 或 `package-lock.json`（用户拍板留哪个）
-- 移动 `backend/simple_test.py / test_api.py / test_types.py / check_db.py` 到 `backend/tests/`
-- `backend/yolo_config.json` 与代码默认值的一致性（要先确认 zonghe 是否实际加载该 json）
+| commit | 内容 |
+|---|---|
+| `a62332d` | 第一轮 simplify：teacher.py 单例 + timeout + fallback；defect_name_safe；score 夹取；删 mock；URL 统一 |
+| `08e796f / 87cafc9 / 1877d50 / 421cdab` | 文档：PROJECT_MEMORY / STRUCTURE_REPLAN / EXECUTION_PLAN（即 UPGRADE_PROPOSAL 改名） |
+| `d8299f0` | Batch 1：删 pnpm 锁文件、雷达 mock 兜底加示例数据角标、lesson mock 瘦身 |
+| `1946aa5` | YOLO 加载链：torch.load monkey-patch + dill 依赖 |
+| `57ca65c` | yolo_config.json 真正接通到 IntegratedWeldDetector |
 
-**重要**：本阶段改动 commit 但 **不 push**，等用户逐项 review 后由用户授权再推。
+**Phase A 还剩**（保留为后续 simplify 小批量）：
 
-### Phase B — 原规划 Claude 该做的部分（Phase A 通过后）
+- A5 `.gitignore` 补 `__pycache__/`、`*.pyc`、`welding.db`；`git rm --cached` 把这些从追踪里清掉
+- A6 后端测试脚本 `simple_test.py / test_api.py / test_types.py / check_db.py` 迁到 `backend/tests/` 并修 import
 
-按 `docs/国赛11天升级规划与代码梳理.md` 的 P0/P1：
+A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完成。
 
-- 摄像头来源去硬编码（前端配置面板 + 后端环境变量），与用户有线摄像头联调对接
-- ROI 可配置：把 `yolo_realtime.py` 的中心 1/3 裁剪改成 `(x, y, w, h)` 可写状态，前端加可视化检测框 + 配置 UI
-- 缺陷名称兜底：所有出现「未知缺陷」的位置换成 `get_defect_name_safe()`（已建好工具函数）
-- PDF 报告本地规则化：完善 `services/rules/`，剥离 AI 依赖
-- AI 兜底巡查：`api/lesson_plan.py`、`api/predict.py` 中的 AI 调用都加上 timeout + fallback（参考 `teacher.py` 已做的模式）
+### Phase B — 有线摄像头接入（代码侧）
 
-### Phase C — 提案新增项中能顺带做的（与 Phase B 并行/穿插）
+**只有一项**：
 
-按优先级从高到低，挑选时机与 Phase B 任务结合：
+- **B1 摄像头来源配置化**
+  - 删 `front/components/detection/yolo-realtime-detector.tsx:51` 的硬编码 `http://cc:12345@10.94.91.17:8080/`
+  - 新增 `NEXT_PUBLIC_CAMERA_URL` 环境变量 + `srtp:camera_url` localStorage 覆盖
+  - 加一个齿轮按钮，运行时切 URL；空值时不传 `camera_url`，后端 fallback 到 `camera_id=0`（本地 USB / 有线相机）
+  - 前端新建 `front/lib/storage.ts` 做 `srtp:` 前缀命名空间（顺带 D 阶段的 demo-safe-mode 也走它）
+  - 联调：等用户接上有线相机后告知，按上面的 UI 切一遍走通完整流程
 
-1. 删 `/predict/ai-radar-data` mock 改真实数据（与 Phase B「PDF 本地规则化」批次合并做）
-2. 演示数据预播种脚本 `backend/scripts/seed_demo_data.py`（与 Phase B 调试合并）
-3. 教学/严格模式切换（与 Phase B「ROI 可配置」一起做 UI 设置面板）
-4. 演示降级模式（必须做，安全网）
-5. TTS 重要事件播报（仅 <60 分 / 严重缺陷 / 保存成功 三种场景；含手动静音开关）
-6. 标准对齐文案（仅 PDF 报告页脚 + 讲稿大纲，不进 README）
+### Phase C — 原规划 P2（登录 + 归属 + PK + 对比）
 
-### Phase D — 提案中无法顺带、留到最后
+依赖 B1 完成（演示链路稳了再加身份层），按依赖顺序：
 
-- 缺陷空间标注 / 热图（数据库加 `defect_bboxes` JSON 列；前端历史记录点击可视化）
+- **C1 演示登录**
+  - 后端：新建 `backend/api/auth.py`，3 个预设账号 `student_a / student_b / teacher_demo`；POST `/api/v1/auth/login` 返回简单 token 或 session
+  - 前端：新建 `front/app/login/page.tsx`、`front/contexts/AuthContext.tsx`、`front/lib/auth.ts`
+  - 左侧导航新增「登录」（决策 #10）
 
-### Phase E — 冻结
+- **C2 学生数据归属**
+  - 前端 save_score 调用链统一从 AuthContext 取 `student_id / student_name`
+  - `WeldingRecord` 表字段已存在，无需迁移
+  - 验证：保存后能从 `/student-comparison` 看到分组
+
+- **C3 数据树用户隔离**
+  - `DataTreeContext` 加按 `student_id` 过滤
+  - 持久化数据树到 localStorage（解决之前内存丢失问题）
+  - 切换账号时清空 / 重加载该学生历史
+
+- **C4 学生对比页 / PK 视图**
+  - 左侧导航新建「学生对比 / PK」
+  - 调 `/student-comparison` + `/batch-list`，同屏对比平均分、技能雷达、检测次数、最近趋势
+  - 加分项：双数据树并排渲染
+
+### Phase D — 提案新增项（Phase B/C 之外）
+
+按优先级：
+
+- **D1 演示降级模式**（最重要的现场安全网）
+  - 新建 `front/public/demo/weld.mp4`（占位或现有焊缝图序列）、`front/public/demo/cached_result.json`
+  - 设置模块加开关：开启后摄像头流改读本地文件、YOLO 数据改读 cached_result.json
+  - localStorage 键 `srtp:demo_safe_mode`
+
+- **D2 删 `/predict/ai-radar-data` mock**
+  - 后端：删 `_MOCK_RADAR_DATA` 7 套轮换，改为从 DB 按缺陷类型计数 + 技能维度求平均
+  - 前端：拿到真数据时不再显示「示例数据」角标
+
+- **D3 演示数据预播种**
+  - 新建 `backend/scripts/seed_demo_data.py`：3-4 个学生 × 各 15-30 条历史检测，分数曲线合理（有上升 + 波动），不同学生有不同短板（A 偏宽度差、B 偏缺陷多）
+
+- **D4 教学/严格模式切换**
+  - 后端 detection runtime 暴露 confidence 可写状态（GET/POST `/api/v1/runtime/confidence`）
+  - 前端设置面板加二档开关：教学 0.3 / 严格 0.6
+
+- **D5 TTS 重要事件播报**
+  - 新建 `front/lib/tts.ts`（speechSynthesis 封装 + 静音开关 + 显式 voice 选择）
+  - DetectionModule 在 3 类事件触发播报：`总分 < 60` / `严重缺陷出现` / `保存成功`
+  - 设置面板加全局静音开关；首次触发时给浏览器策略提示
+  - 离线兜底：录 1-2 段关键 MP3 放 `front/public/demo/voice/`
+
+- **D6 标准对齐文案**
+  - PDF 报告页脚加「评分参考 GB/T 19418-2003 缺陷分级」
+  - 新建 `docs/讲稿大纲.md`：把 GB/T 19418、GB/T 32259、1+X 三项叙事写进去
+  - 不进 README（决策 #5）
+
+### Phase E — 缺陷热图
+
+- 数据库 `WeldingRecord` 加 `defect_bboxes` JSON 列（非破坏性迁移）
+- 后端 save_score 多存 bbox 数据
+- 前端历史记录页面单条点击 → 在原图上画 bbox；批次累积 → 热图
+
+### Phase F — 冻结
 
 - 2026-05-27：只修 bug，不加功能；连跑 3 遍演示
-- 2026-05-28：打包备份，比赛电脑 + U 盘 + 云盘
+- 2026-05-28：打包备份（比赛电脑、U 盘、云盘）
 
 ---
 
-## 3. 决策摘要（用户 2026-05-19 答复）
+## 3. 决策摘要（2026-05-19 用户答复）
 
 | # | 议题 | 决策 |
 |---|---|---|
-| 1 | 3D 路线 | **不由用户负责**，跳过 Claude 这边 |
-| 2 | TTS 播报 | **做**，仅重要事件（<60 分 / 严重缺陷 / 保存成功） |
-| 3 | 教学模式 / 严格模式切换 | **做** |
-| 4 | 演示降级模式 | **做** |
-| 5 | 标准对齐叙事 GB/T 19418 + 1+X | **做**，仅 PDF 和讲稿，不进 README |
-| 6 | 演示数据预播种 | **做** |
-| 7 | `/predict/ai-radar-data` mock | **删** |
-| 8 | 缺陷空间标注 / 热图 | 列为 P2（最后做） |
-| 9 | 中英切换 | **不做** |
-| 10 | 演示登录放哪里 | **新建导航** |
-| 11 | 是否按 STRUCTURE_REPLAN 拆分 page.tsx / yolo_realtime.py | **同意**，逐步拆 |
-| 12 | 任务流 | 先深度 /simplify → 完成原规划 → 完成提案剩余项；代码改动等用户审核后再推 |
+| 1 | 3D 路线 | 不由 Claude 负责（团队其他成员处理） |
+| 2 | TTS 播报 | 做，仅重要事件（<60 分 / 严重缺陷 / 保存成功） |
+| 3 | 教学模式 / 严格模式切换 | 做 |
+| 4 | 演示降级模式 | 做 |
+| 5 | 标准对齐叙事 GB/T 19418 + 1+X | 做，仅 PDF 和讲稿，不进 README |
+| 6 | 演示数据预播种 | 做 |
+| 7 | `/predict/ai-radar-data` mock | 删 |
+| 8 | 缺陷空间标注 / 热图 | 列为最低优先级，最后做 |
+| 9 | 中英切换 | 不做 |
+| 10 | 演示登录放哪里 | 新建导航 |
+| 11 | 是否按 STRUCTURE_REPLAN 拆分 page.tsx / yolo_realtime.py | 同意，逐步拆 |
+| 12 | 任务流 | 先深度 /simplify → 完成原规划（不是 Claude 做的部分以外） → 完成提案剩余项 → 缺陷热图；代码改动等用户审核后再推 |
 
 ---
 
 ## 4. 推/审流程
 
-- **文档改动**（`.claude/*.md`、`docs/*.md`、`README.md`）：commit 后立即双推（GitHub `srtp/main` + Gitee `gitee/dev-upgrade`），零风险。
-- **代码改动**：commit 后**先不 push**。在 commit message 里写清动机和影响范围，告知用户「待审」。用户审核 OK 后由 Claude 双推。
+- **文档改动**（`.claude/*.md`、`docs/*.md`、`README.md`）：commit 后立即双推。
+- **代码改动**：commit 后**先不 push**，commit message 写清动机和影响范围、告知用户「待审」；用户授权后双推。
 - 双推命令固定：
   ```bash
   git push srtp main
@@ -105,38 +157,41 @@
 
 ---
 
-## 5. 完成后必做：更新 [PROJECT_MEMORY.md](./PROJECT_MEMORY.md)
+## 5. 完成阶段后必做：更新 [PROJECT_MEMORY.md](./PROJECT_MEMORY.md)
 
-每个阶段结束（Phase A/B/C/D 各一次）必须更新 PROJECT_MEMORY 第 10 节修订历史：
+每个 Phase（A 完成 / B / C / D / E）结束都要追加修订条目到 §10：
 - 列出本阶段实际改动的文件
 - 标注是否仍有未完成项需要延期
 - 如有重大决策变更，回写到本文第 3 节
 
 ---
 
-## 6. 关于 3D 部分
+## 6. 关于其他成员的工作
 
-- Claude 不负责，用户也不负责，由团队其他成员处理。
-- 但前端导航位、`front/components/modules/ThreeDModule.tsx` 占位、`front/public/3d/` 目录由 Claude 在 Phase B 留好接口（一个空模块 + 一行 README 说明），便于其他成员塞入资产。
+Claude 不写、不接、不调通联：
+
+- 3D 模型生成与展示（团队其他成员）
+- 原规划 P0/P1 除 3D 部分（团队其他成员）
+
+但 Claude 会留好接口供他们填：
+
+- 前端：`front/components/modules/ThreeDModule.tsx` 空壳 + `front/public/3d/` 目录
+- 后端：如果 P2 工作中发现某个端点需要 P0/P1 团队配合调整接口契约，告知用户、由用户协调
 
 ---
 
-## 7. 关于 P2（用户负责部分）的对接点
+## 7. 关于硬件部分
 
-用户做原规划 P2（登录/数据归属/PK）时，Claude 需要预留的接口：
-
-- `backend/api/auth.py` 路由空架子（路由前缀 `/api/v1/auth`），Claude 可以在 Phase B 末尾建好；用户填业务。
-- `backend/schemas/auth.py` Pydantic 模型空架子。
-- `front/contexts/AuthContext.tsx` 空 Context；`front/lib/storage.ts` 提供「当前学生身份」的统一存取。
-- `WeldingRecord.student_id / student_name / batch_id` 字段已存在，无需迁移；保存检测记录时 Claude 把当前身份带上即可（与 Phase B 配合）。
-- 数据树和 PK 视图属于用户工作，Claude 不在 `data-tree-viewer.tsx` 中预先加 PK 视图入口。
+- "有线摄像头接入" 的**代码侧**（环境变量、UI、参数下发、状态显示）由 Claude 做。
+- 物理操作（插线、调光、对焦、装支架）由用户做。
+- 联调时机：B1 完成 + 用户实物到位 → 用户告知 → Claude 协助一起走 start-yolo + 视频流验证。
 
 ---
 
 ## 8. 现在的下一步
 
-1. ✅ 本文档完成
-2. ✅ [PROJECT_MEMORY.md](./PROJECT_MEMORY.md)、[STRUCTURE_REPLAN.md](./STRUCTURE_REPLAN.md) 同步修订
-3. 推送本次文档改动到双远程
-4. 进入 Phase A —— 跑深度 /simplify
-5. Phase A 改动 commit 后等待用户审核
+1. ✅ 本文档 v3 修订完毕
+2. PROJECT_MEMORY.md / STRUCTURE_REPLAN.md 同步修订（去掉 Claude 拥有 P0/P1 的错误描述）
+3. 推送本次文档修订到双远程
+4. 进入 Phase B：B1 摄像头配置化（此前已部分开始，会重新对齐这个新边界）
+5. B1 → C1 → C2 → C3 → C4 → D1 → D2 → D3 → D4 → D5 → D6 → E → F

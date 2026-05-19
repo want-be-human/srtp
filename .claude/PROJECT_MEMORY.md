@@ -351,18 +351,26 @@ SQLite ─→ /predict → RandomForest → 历史+预测折线
 ## 9. 给未来 Claude 的提示
 
 - **打开仓库第一件事**：读 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md) 拿到当前阶段任务清单和责任分工。
+- **Claude 实际工作范围只有 4 块**：有线摄像头接入（代码侧）、原规划 P2（登录/归属/PK/对比）、提案新增非 P2 项（TTS/严格模式/降级模式/mock 清理/数据预播种/标准对齐文案）、缺陷热图（最后做）。**原规划 P0/P1 除 3D 外**由团队其他成员负责，**Claude 不主动做**；如果在 P2 相关代码里遇到 P0/P1 的问题，告知用户、由用户分配，不擅自修。
 - **代码改动后默认不推送**：commit 后等用户审核，用户授权再 `git push srtp main && git push gitee main:dev-upgrade`。文档改动可直接双推。
 - 改字段时请记得「`spacing_score` ↔ `width_score`」错位的历史包袱。
 - `app/page.tsx` 940 行不要再追加新模块；要新增模块就拆文件。
 - AI 改动一律走「先 fallback、再 AI」的模式，禁止把 AI 调用做成阻塞主流程的必要条件。
 - 数据树相关改动如果不是「按学生分树/双树 PK」级别的需求，不要动 `data-tree-viewer.tsx` 的粒子逻辑，那是非常容易破坏视觉的高复杂度代码。
 - 3D 模块不由 Claude / 用户负责，由团队其他成员处理；Claude 只留好导航位和静态资产目录。
-- 演示登录 / 学生归属 / PK 是用户自己负责的任务，Claude 不要抢做，仅留 API/Context 空架子供对接。
 - 国赛冻结日 2026-05-27 起，只修 bug、不加功能。
 
 ---
 
 ## 10. 修订历史
+
+### v3 — 2026-05-19 责任分工修正
+
+EXECUTION_PLAN 进入 v3：明确 Claude 实际只负责 4 块（有线摄像头代码侧、原规划 P2、提案非 P2 项、缺陷热图）；原规划 P0/P1 除 3D 外**不是** Claude 的工作。v1/v2 误把这些塞给了 Claude。
+
+已经在 simplify 期间顺带做掉的 P0/P1 局部（`teacher.py` AI 超时与兜底、`defect_name_safe()`、`yolo_config.json` 接通、YOLO 加载链修复）属于既成事实，已推送、不回滚。后续不再继续 P0/P1 工作。
+
+涉及 commit：`57ca65c`、`1946aa5`、`d8299f0`、`a62332d` 之上的所有未来 commit 都只在 Claude 实际范围内。
 
 ### v2 — 2026-05-19 (commit `a62332d`) simplify 后
 

@@ -159,21 +159,22 @@ front/
 
 | 升级方向 | 涉及结构变动 | 负责人 |
 |---|---|---|
-| ROI 可配置 | `services/detection/runtime.py` 暴露 `roi`；前端 SettingsModule 加 ROI 设置面板 | Claude |
-| 缺陷名兜底 | `defect_types.get_defect_name_safe()`（已建） | Claude |
-| AI 超时兜底 | `services/ai.py` 单例 client + `httpx.Timeout`（teacher.py 已示范）；规则库放 `services/rules/` | Claude |
-| PDF 本地规则化 | `services/rules/` 提供 `recommend(skill_stats, defect_stats)`；`api/lesson_plan.py` 调用 | Claude |
-| 教学/严格模式切换 | `services/detection/runtime.py` 暴露 confidence 阈值可写；SettingsModule 加开关 | Claude |
-| 演示降级模式 | `front/public/demo/`+ SettingsModule 开关 + 前端拦截 fetch 改读本地 | Claude |
-| TTS 重要事件播报 | `front/lib/tts.ts` + DetectionModule 在分数变化时调用 | Claude |
-| 删 mock 雷达 | 删 `api/predict.py` 的 `_MOCK_RADAR_DATA`，改从 DB 聚合 | Claude |
-| 演示数据预播种 | `backend/scripts/seed_demo_data.py` | Claude |
-| 标准对齐文案 | PDF 模板加页脚、`docs/` 加讲稿大纲（不进 README） | Claude |
-| 缺陷热图（最低优先级） | DB 加 `defect_bboxes` JSON 列 + 历史记录可视化 | Claude |
-| 有线摄像头接入 | 后端 camera_url 配置化（Claude）+ 硬件连通性（用户） | Claude + 用户 |
-| 演示登录 | `api/auth.py` + 前端 `app/login` + `AuthContext` | **用户** |
-| 学生数据归属 | `lib/auth.ts` 在保存检测时塞 `student_id` | **用户** |
-| 数据树 PK | `DataTreeContext` 按 `student_id` 分组；`DataTreeModule` 加双树视图 | **用户** |
+| ROI 可配置 | `services/detection/runtime.py` 暴露 `roi`；前端 SettingsModule 加 ROI 设置面板 | **团队其他成员** |
+| 缺陷名兜底 sweep | 全后端把「未知」换成 `defect_types.get_defect_name_safe()`（工具函数已建） | **团队其他成员** |
+| AI 超时兜底 sweep | `lesson_plan.py / predict.py` 中所有 AI 调用按 `teacher.py` 模式加 timeout + fallback | **团队其他成员** |
+| PDF 本地规则化 | `services/rules/` 提供 `recommend(skill_stats, defect_stats)`；`api/lesson_plan.py` 调用 | **团队其他成员** |
+| 有线摄像头接入（代码侧） | 删 `yolo-realtime-detector.tsx` 硬编码 URL；env + localStorage 配置；运行时 UI；后端已支持 | **Claude** |
+| 演示登录 | `api/auth.py` + 前端 `app/login` + `AuthContext` + 左侧导航 | **Claude** |
+| 学生数据归属 | save_score 调用链统一从 AuthContext 取 `student_id` | **Claude** |
+| 数据树 PK | `DataTreeContext` 按 `student_id` 分组 + 持久化；新增双树对比视图 | **Claude** |
+| 学生对比页 / PK 视图 | 新建导航；调 `/student-comparison` + `/batch-list` | **Claude** |
+| 教学/严格模式切换 | 后端暴露 confidence 阈值可写；前端 SettingsModule 加开关 | **Claude** |
+| 演示降级模式 | `front/public/demo/`+ SettingsModule 开关 + 前端拦截 fetch 改读本地 | **Claude** |
+| TTS 重要事件播报 | `front/lib/tts.ts` + DetectionModule 在 score < 60 / 严重缺陷 / 保存成功 三种事件播报 | **Claude** |
+| 删 mock 雷达 | 删 `api/predict.py` 的 `_MOCK_RADAR_DATA`，改从 DB 聚合 | **Claude** |
+| 演示数据预播种 | `backend/scripts/seed_demo_data.py`（3-4 学生 × 各 15-30 条） | **Claude** |
+| 标准对齐文案 | PDF 模板加页脚、`docs/讲稿大纲.md` 加 GB/T 19418 + 1+X 三段叙事（不进 README） | **Claude** |
+| 缺陷热图（最低优先级） | DB 加 `defect_bboxes` JSON 列 + 历史记录可视化 | **Claude**，最后做 |
 | 3D 重构入口 | `components/modules/ThreeDModule.tsx` + 静态资产放 `front/public/3d/` | **团队其他成员**（Claude 留空壳） |
 
 ---
