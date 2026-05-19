@@ -332,21 +332,32 @@ SQLite ─→ /predict → RandomForest → 历史+预测折线
 
 ## 8. 开发协作约定（基于本文档的工作流）
 
-1. **双远程同步**：每次完成一个改动，需推送到 GitHub `srtp/main` **以及** Gitee `gitee/dev-upgrade`。
-2. **稳定性优先**：升级任务必须先在本机跑通前后端完整链路才合并；改 `yolo_realtime.py`、`predict.py`、`app/page.tsx` 这三个大文件前先告知其他成员。
-3. **mock 数据需打标**：前端任何 `MOCK_*` 常量都加 `// TODO:replace-with-backend` 注释，便于国赛前清单清理。
-4. **.env 永不入仓**：`backend/.env` 已含真实 key 风险；如发现入库需做 `git filter-repo` 清除。
-5. **不要再添加新的硬编码 URL / IP**：必须经 `front/lib/api.ts` 或环境变量。
+1. **双远程同步**：
+   - GitHub `srtp/main` 和 Gitee `gitee/dev-upgrade` 必须保持一致。
+   - 推送命令固定为：`git push srtp main && git push gitee main:dev-upgrade`。
+2. **审核流程**（用户 2026-05-19 决策）：
+   - **文档改动**（`.claude/*.md`、`docs/*.md`、`README.md`）：commit 后立即双推，无需审核。
+   - **代码改动**：commit 后**先不 push**；在 commit message 写清动机/影响，告知用户「待审」；用户 OK 后再双推。
+3. **稳定性优先**：所有改动必须能在改完当晚跑通完整演示链路。
+4. **三大文件谨慎触碰**：`yolo_realtime.py`（线程协作）、`data-tree-viewer.tsx`（粒子着色）、`app/page.tsx`（940 行单页）。改之前先告知人。
+5. **mock 数据需打标**：前端任何 `MOCK_*` 常量都加 `// TODO:replace-with-backend` 注释。
+6. **.env 永不入仓**：`backend/.env` 已含真实 key 风险；如确认入库需 `git filter-repo` 清除。
+7. **不要再添加新的硬编码 URL / IP**：必须经 `front/lib/api.ts` 或环境变量。
+
+详细执行计划见 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md)，结构重组方向见 [STRUCTURE_REPLAN.md](./STRUCTURE_REPLAN.md)。
 
 ---
 
 ## 9. 给未来 Claude 的提示
 
-- 来到本仓库做任何修改前，**先读本文档 §5 P0 列表**，避免顺手破坏摄像头/AI 兜底等关键链路。
+- **打开仓库第一件事**：读 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md) 拿到当前阶段任务清单和责任分工。
+- **代码改动后默认不推送**：commit 后等用户审核，用户授权再 `git push srtp main && git push gitee main:dev-upgrade`。文档改动可直接双推。
 - 改字段时请记得「`spacing_score` ↔ `width_score`」错位的历史包袱。
 - `app/page.tsx` 940 行不要再追加新模块；要新增模块就拆文件。
 - AI 改动一律走「先 fallback、再 AI」的模式，禁止把 AI 调用做成阻塞主流程的必要条件。
 - 数据树相关改动如果不是「按学生分树/双树 PK」级别的需求，不要动 `data-tree-viewer.tsx` 的粒子逻辑，那是非常容易破坏视觉的高复杂度代码。
+- 3D 模块不由 Claude / 用户负责，由团队其他成员处理；Claude 只留好导航位和静态资产目录。
+- 演示登录 / 学生归属 / PK 是用户自己负责的任务，Claude 不要抢做，仅留 API/Context 空架子供对接。
 - 国赛冻结日 2026-05-27 起，只修 bug、不加功能。
 
 ---

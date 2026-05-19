@@ -1,8 +1,8 @@
-# 项目结构重新规划（提案）
+# 项目结构重新规划（已批准的方向）
 
-> 本文档为「结构重组」的提案，**不立即执行**。  
-> 目标：让国赛 11 天升级期间的协作和稳定性更好，同时为后续 P0/P1 任务（ROI 配置化、登录、3D 重构、PK）腾出干净接口。  
-> 任何条目执行前，需要在团队对齐后再动手，并且每动一条都要保证整链路（前后端启动 + 检测 + 入库 + 预测 + PDF + AI）跑通。
+> 用户 2026-05-19 批准「逐步按本提案拆分 `app/page.tsx` 与 `api/yolo_realtime.py`」（决策 #11）。  
+> 本文档是「结构重组」的**方向参考**，不是「立即一次性执行」的清单。**配合 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md) 的 Phase A-D 节奏渐进式拆。**  
+> 任何条目执行前，必须保证整链路（前后端启动 + 检测 + 入库 + 预测 + PDF + AI）跑通。
 
 ---
 
@@ -10,9 +10,10 @@
 
 1. **稳定优先**：所有重构必须能在改完当晚跑通完整演示链路。
 2. **小步多 commit**：每一次结构性改动单独一个 commit，便于回滚。
-3. **不引入新硬编码**：URL、阈值、模型路径、摄像头地址一律走配置。
-4. **保持运行入口不变**：`start_all.bat`、前端 `npm run dev`、后端 `uvicorn main:app` 三个入口的命令本身不变。
-5. **不一次性大改大文件**：`page.tsx`、`yolo_realtime.py`、`predict.py` 都要分多个 PR 拆分。
+3. **代码改动等用户审核再推**（见 [PROJECT_MEMORY.md §8](./PROJECT_MEMORY.md)）。
+4. **不引入新硬编码**：URL、阈值、模型路径、摄像头地址一律走配置。
+5. **保持运行入口不变**：`start_all.bat`、前端 `npm run dev`、后端 `uvicorn main:app` 三个入口的命令本身不变。
+6. **不一次性大改大文件**：`page.tsx`、`yolo_realtime.py`、`predict.py` 都要分多个 PR 拆分。
 
 ---
 
@@ -90,14 +91,14 @@ backend/
 - 同时存在 `package-lock.json` 与 `pnpm-lock.yaml`，需要选一个。
 - `front/lib/api.ts` 只有 URL，没有 `fetcher`，导致每个组件自己写 try/catch。
 
-### 3.2 建议结构
+### 3.2 建议结构（标注谁负责）
 
 ```
 front/
 ├── app/
 │   ├── layout.tsx
 │   ├── page.tsx                 # 仅留导航壳 + 模块切换；模块内容外移
-│   └── login/page.tsx           # 新增：演示登录
+│   └── login/page.tsx           # 由用户 P2 任务负责，Claude 不预先建
 ├── components/
 │   ├── modules/                 # 新增：把内联的 *Content 拆成独立模块组件
 │   │   ├── DashboardModule.tsx
@@ -106,8 +107,8 @@ front/
 │   │   ├── PredictionModule.tsx
 │   │   ├── DataTreeModule.tsx
 │   │   ├── LessonPlanModule.tsx
-│   │   ├── ThreeDModule.tsx     # 新增：3D 重构展示
-│   │   └── SettingsModule.tsx
+│   │   ├── ThreeDModule.tsx     # Claude 留空壳，3D 资产由团队其他成员补
+│   │   └── SettingsModule.tsx   # 含教学/严格模式切换、演示降级开关、TTS 静音
 │   ├── detection/yolo-realtime-detector.tsx
 │   ├── data-tree/...
 │   ├── prediction/...
@@ -115,19 +116,21 @@ front/
 │   ├── ai-teacher/...
 │   └── ui/
 ├── lib/
-│   ├── api.ts                   # 端点 URL 常量
+│   ├── api.ts                   # 端点 URL 常量（已存在）
 │   ├── fetcher.ts               # 新增：统一 fetch（timeout、错误归一、`?t=` cache buster）
-│   ├── auth.ts                  # 新增：演示登录的本地存储 + Context
-│   └── storage.ts               # 新增：localStorage key 命名空间统一
+│   ├── tts.ts                   # 新增：speechSynthesis 封装 + 静音开关
+│   ├── storage.ts               # 新增：localStorage key 命名空间统一（srtp: 前缀）
+│   └── auth.ts                  # 由用户 P2 负责，Claude 留空壳供对接
 ├── contexts/
-│   ├── AuthContext.tsx          # 当前学生身份
-│   └── DataTreeContext.tsx      # 现有；加 IndexedDB / localStorage 持久化、按学生过滤
+│   ├── AuthContext.tsx          # 由用户 P2 负责
+│   └── DataTreeContext.tsx      # 现有；持久化和按学生过滤由用户 P2 扩
 ├── hooks/
 │   ├── useDashboardStats.ts     # 把 page.tsx 里的 fetch 迁入
 │   └── useYoloData.ts           # 把 YOLO 轮询逻辑封装
 ├── types/
 │   └── domain.ts                # YOLODetectionResult / DetectionResult / TreeData 集中
 ├── public/
+│   └── demo/                    # 演示降级模式用：weld.mp4 + cached_result.json
 ├── next.config.mjs              # 国赛前打开一次 TS 检查并修
 ├── package.json
 └── .env.local.example           # 新增；同时把 .env.local 加进 .gitignore
@@ -152,18 +155,26 @@ front/
 
 ---
 
-## 5. 与 11 天升级规划的对接
+## 5. 与升级计划的对接
 
-| 升级方向 | 涉及结构变动 |
-|---|---|
-| ROI 可配置 | `services/detection/runtime.py` 暴露 `roi`；前端 SettingsModule 加 ROI 设置面板 |
-| 缺陷名兜底 | `defect_types.get_defect_name_safe()` |
-| AI 超时兜底 | `services/ai.py` 单例 client + `httpx.Timeout`；规则库放 `services/rules/` |
-| PDF 本地规则化 | `services/rules/` 提供 `recommend(skill_stats, defect_stats)`；`api/lesson_plan.py` 调用 |
-| 演示登录 | `api/auth.py` + 前端 `app/login` + `AuthContext` |
-| 学生数据归属 | `lib/auth.ts` 在保存检测时塞 `student_id` |
-| 数据树 PK | `DataTreeContext` 按 `student_id` 分组；`DataTreeModule` 加双树视图 |
-| 3D 重构入口 | `components/modules/ThreeDModule.tsx` + 静态模型资产放 `front/public/3d/` |
+| 升级方向 | 涉及结构变动 | 负责人 |
+|---|---|---|
+| ROI 可配置 | `services/detection/runtime.py` 暴露 `roi`；前端 SettingsModule 加 ROI 设置面板 | Claude |
+| 缺陷名兜底 | `defect_types.get_defect_name_safe()`（已建） | Claude |
+| AI 超时兜底 | `services/ai.py` 单例 client + `httpx.Timeout`（teacher.py 已示范）；规则库放 `services/rules/` | Claude |
+| PDF 本地规则化 | `services/rules/` 提供 `recommend(skill_stats, defect_stats)`；`api/lesson_plan.py` 调用 | Claude |
+| 教学/严格模式切换 | `services/detection/runtime.py` 暴露 confidence 阈值可写；SettingsModule 加开关 | Claude |
+| 演示降级模式 | `front/public/demo/`+ SettingsModule 开关 + 前端拦截 fetch 改读本地 | Claude |
+| TTS 重要事件播报 | `front/lib/tts.ts` + DetectionModule 在分数变化时调用 | Claude |
+| 删 mock 雷达 | 删 `api/predict.py` 的 `_MOCK_RADAR_DATA`，改从 DB 聚合 | Claude |
+| 演示数据预播种 | `backend/scripts/seed_demo_data.py` | Claude |
+| 标准对齐文案 | PDF 模板加页脚、`docs/` 加讲稿大纲（不进 README） | Claude |
+| 缺陷热图（最低优先级） | DB 加 `defect_bboxes` JSON 列 + 历史记录可视化 | Claude |
+| 有线摄像头接入 | 后端 camera_url 配置化（Claude）+ 硬件连通性（用户） | Claude + 用户 |
+| 演示登录 | `api/auth.py` + 前端 `app/login` + `AuthContext` | **用户** |
+| 学生数据归属 | `lib/auth.ts` 在保存检测时塞 `student_id` | **用户** |
+| 数据树 PK | `DataTreeContext` 按 `student_id` 分组；`DataTreeModule` 加双树视图 | **用户** |
+| 3D 重构入口 | `components/modules/ThreeDModule.tsx` + 静态资产放 `front/public/3d/` | **团队其他成员**（Claude 留空壳） |
 
 ---
 
@@ -188,4 +199,4 @@ front/
 
 ---
 
-*本提案在执行 /simplify 之前定稿。执行后会再生成一份「实际改动清单」更新到 PROJECT_MEMORY.md 第 1 节的「速查总览」和第 2/3 节相关条目。*
+*第一轮 /simplify 已完成（commit `a62332d`），实际改动清单见 [PROJECT_MEMORY.md §10](./PROJECT_MEMORY.md)。后续阶段按 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md) 推进。*
