@@ -41,6 +41,24 @@ try:
     from .guanghuadu_jiance_qiqi import WeldingQualityScorer
     from .kuandu_jiance_qiqi import PreciseWeldDetector
 
+    # PyTorch >=2.6 把 torch.load 的 weights_only 默认改为 True。Ultralytics
+    # 8.0.x 的 best.pt 引用了 DetectionModel / dill._dill._load_type 等多个全局，
+    # 逐个加白名单不现实。这里直接 monkey-patch：项目中所有 torch.load 默认
+    # weights_only=False。.pt 来源是仓库内自带且受信任，可接受这一安全权衡。
+    try:
+        import torch
+        if not getattr(torch.load, "_srtp_patched", False):
+            _orig_torch_load = torch.load
+
+            def _trusted_torch_load(*args, **kwargs):
+                kwargs.setdefault("weights_only", False)
+                return _orig_torch_load(*args, **kwargs)
+
+            _trusted_torch_load._srtp_patched = True
+            torch.load = _trusted_torch_load
+    except Exception:
+        pass
+
     # 导入统一的缺陷类型定义
     sys.path.insert(
         0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

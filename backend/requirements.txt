@@ -14,6 +14,9 @@ python-multipart==0.0.6
 
 # YOLO检测
 ultralytics==8.0.196
+# 项目自带的 best.pt 是用 dill 序列化的，ultralytics 自身没列 dill 为依赖，
+# 但加载 .pt 必须；显式锁定避免 ultralytics AutoInstall（官方将移除该机制）。
+dill>=0.3.7
 
 # AI API (版本兼容)
 openai==1.12.0
