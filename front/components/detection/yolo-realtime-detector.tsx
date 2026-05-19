@@ -5,8 +5,17 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Camera, CameraOff, Settings, TrendingUp, Upload, Image as ImageIcon } from "lucide-react"
 import { API_ENDPOINTS } from "@/lib/api"
+import { StorageKey, getString, setString, remove } from "@/lib/storage"
 import { useDataTree } from '@/components/data-tree/data-tree-context'
 import { convertYOLOToTreeData } from '@/components/data-tree/data-adapter'
+
+// 摄像头来源优先级：localStorage(srtp:camera_url) → NEXT_PUBLIC_CAMERA_URL → 空字符串
+// 空字符串告诉后端 fallback 到 camera_id=0（本地 USB / 有线相机）
+function resolveCameraUrl(): string {
+  const fromStorage = getString(StorageKey.CAMERA_URL, "")
+  if (fromStorage) return fromStorage
+  return process.env.NEXT_PUBLIC_CAMERA_URL || ""
+}
 
 // YOLO检测结果的类型定义
 interface YOLODetectionResult {
@@ -35,21 +44,46 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
   const [videoStreamUrl, setVideoStreamUrl] = useState<string>('')
   const [uploadedImage, setUploadedImage] = useState<string | null>(null)
   const [isUploading, setIsUploading] = useState(false)
+  const [cameraUrl, setCameraUrl] = useState<string>('')  // 当前生效的摄像头源
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { addTreeData } = useDataTree()
+
+  // 客户端挂载后再读 localStorage / env，避免 SSR 水合不一致
+  useEffect(() => {
+    setCameraUrl(resolveCameraUrl())
+  }, [])
+
+  // 打开 prompt 让用户改摄像头源；保存到 localStorage，空字符串时回退到 env / 后端默认相机
+  const handleConfigureCamera = () => {
+    const current = resolveCameraUrl()
+    const next = window.prompt(
+      "摄像头地址（留空使用本地 USB / 有线相机）\n例：http://用户名:密码@IP:端口/",
+      current,
+    )
+    if (next === null) return  // 用户取消
+    const trimmed = next.trim()
+    if (trimmed) {
+      setString(StorageKey.CAMERA_URL, trimmed)
+    } else {
+      remove(StorageKey.CAMERA_URL)
+    }
+    setCameraUrl(resolveCameraUrl())
+  }
 
   // 启动后端YOLO检测
   const startYOLODetection = async () => {
     try {
       setError('')
+      const activeUrl = resolveCameraUrl()
+      // 空字符串时不传 camera_url 字段，让后端走 camera_id=0 默认
+      const body: Record<string, unknown> = {}
+      if (activeUrl) body.camera_url = activeUrl
       const response = await fetch(API_ENDPOINTS.START_YOLO, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          camera_url: 'http://cc:12345@10.94.91.17:8080/'  // 使用手机IP摄像头
-        })
+        body: JSON.stringify(body),
       })
 
       const result = await response.json()
@@ -322,6 +356,14 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
                   onChange={handleImageUpload}
                   className="hidden"
                 />
+                <Button
+                  size="sm"
+                  className="bg-slate-700 hover:bg-slate-600 text-white border border-slate-500"
+                  onClick={handleConfigureCamera}
+                  title={cameraUrl ? `当前摄像头: ${cameraUrl}` : "当前: 本地 USB / 有线相机"}
+                >
+                  <Settings className="w-4 h-4" />
+                </Button>
                 <Button
                   size="sm"
                   className="bg-slate-700 hover:bg-slate-600 text-white border border-slate-500"
