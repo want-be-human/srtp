@@ -29,6 +29,9 @@ sys.path.insert(0, backend_dir)
 from database import SessionLocal
 import models
 
+# 演示阈值放在 backend/yolo_config.json，通过 config.YOLO_CONFIG_FILE 注入
+from config import YOLO_CONFIG_FILE
+
 # 导入统一的缺陷类型定义
 try:
     from defect_types import DEFECT_EN_TO_CN, TRUE_DEFECT_TYPES
@@ -195,7 +198,7 @@ def inference_loop():
         # 初始化YOLO检测器
         if YOLO_AVAILABLE and IntegratedWeldDetector:
             with detector_lock:
-                detector = IntegratedWeldDetector()
+                detector = IntegratedWeldDetector(config_file=YOLO_CONFIG_FILE)
             print("✓ YOLO检测器初始化成功（推理线程）")
         else:
             print("⚠ YOLO不可用（推理线程使用模拟数据）")
@@ -746,7 +749,7 @@ async def detect_frame(request: FrameDetectionRequest):
     try:
         # 初始化检测器（如果还没初始化）
         if detector is None and YOLO_AVAILABLE and IntegratedWeldDetector:
-            detector = IntegratedWeldDetector()
+            detector = IntegratedWeldDetector(config_file=YOLO_CONFIG_FILE)
             print("✓ YOLO检测器初始化成功")
 
         # 解码base64图像
@@ -849,7 +852,7 @@ async def detect_image(request: ImageDetectionRequest):
     try:
         # 初始化检测器（如果还没初始化）
         if detector is None and YOLO_AVAILABLE and IntegratedWeldDetector:
-            detector = IntegratedWeldDetector()
+            detector = IntegratedWeldDetector(config_file=YOLO_CONFIG_FILE)
             print("✓ YOLO检测器初始化成功（图片检测）")
 
         # 解码base64图像

@@ -1,6 +1,6 @@
 {
-  "yolo_model_path": "services/yolo/models/best.pt",
-  "confidence_threshold": 0.5,
+  "yolo_model_path": "models/best.pt",
+  "confidence_threshold": 0.3,
   "iou_threshold": 0.45,
   "scoring_weights": {
     "smoothness_weight": 0.3,

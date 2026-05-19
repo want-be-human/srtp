@@ -50,6 +50,11 @@ YOLO_MODEL_PATH = os.environ.get(
 YOLO_CONFIDENCE_THRESHOLD = float(os.environ.get("YOLO_CONFIDENCE_THRESHOLD", 0.3))
 YOLO_IOU_THRESHOLD = float(os.environ.get("YOLO_IOU_THRESHOLD", 0.45))
 
+# yolo_config.json 的绝对路径。IntegratedWeldDetector 用它把演示阈值
+# (confidence=0.5、width 阈值、scoring weights) 真正接入运行时。
+# 文件缺失时 IntegratedWeldDetector 会 fallback 到代码内默认。
+YOLO_CONFIG_FILE = str(BACKEND_DIR / "yolo_config.json")
+
 # ============================================
 # CORS配置
 # ============================================
