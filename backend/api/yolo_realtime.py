@@ -424,6 +424,12 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
         except:
             timestamp = datetime.now()
 
+        def _clamp_score(value: float) -> float:
+            try:
+                return max(0.0, min(100.0, float(value)))
+            except (TypeError, ValueError):
+                return 0.0
+
         # 创建数据库记录
         db_record = models.WeldingRecord(
             timestamp=timestamp,
@@ -431,11 +437,11 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
             student_id=data.student_id,
             student_name=data.student_name,
             batch_id=data.batch_id,
-            # 检测分数
-            smoothness_score=data.smoothness_score,
-            spacing_score=data.width_score,  # width_score 映射到 spacing_score
-            defect_type_score=data.defect_score,
-            total_score=data.total_score,
+            # 检测分数（夹取到 [0,100]，防御异常上游输入）
+            smoothness_score=_clamp_score(data.smoothness_score),
+            spacing_score=_clamp_score(data.width_score),  # width_score 映射到 spacing_score
+            defect_type_score=_clamp_score(data.defect_score),
+            total_score=_clamp_score(data.total_score),
             # 额外信息
             actual_width=data.width_mm,
             defect_type_name=data.defect_type_name,

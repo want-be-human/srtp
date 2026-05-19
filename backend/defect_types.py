@@ -90,6 +90,16 @@ def get_defect_name_cn(class_id: int) -> str:
     return DEFECT_ID_TO_CN.get(class_id, '未知缺陷')
 
 
+def get_defect_name_safe(class_id: int) -> str:
+    """返回前端友好的缺陷名：已知类别返回中文名，未知类别返回 `未匹配类别 ID: x`。
+
+    用于演示场景下避免出现裸的「未知」字样。"""
+    name = DEFECT_ID_TO_CN.get(class_id)
+    if name:
+        return name
+    return f"未匹配类别 ID: {class_id}"
+
+
 def get_defect_name_en(class_id: int) -> str:
     """根据类别ID获取英文名称"""
     return DEFECT_CLASSES.get(class_id, 'Unknown')

@@ -428,7 +428,7 @@ function DetectionContent({ setActiveModule, setDetectionResults, detectionResul
     formData.append("file", selectedFile)
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/api/v1/detect", {
+      const response = await fetch(API_ENDPOINTS.DETECT, {
         method: "POST",
         body: formData,
       })
@@ -492,7 +492,7 @@ function DetectionContent({ setActiveModule, setDetectionResults, detectionResul
       }
 
       // 发送到预测模块
-      const response = await fetch('http://127.0.0.1:8000/api/v1/predict/ai-analysis-custom', {
+      const response = await fetch(API_ENDPOINTS.PREDICT_AI_ANALYSIS_CUSTOM, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -548,7 +548,7 @@ function DetectionContent({ setActiveModule, setDetectionResults, detectionResul
       }
 
       // 发送到预测模块
-      const response = await fetch('http://127.0.0.1:8000/api/v1/predict/ai-analysis-custom', {
+      const response = await fetch(API_ENDPOINTS.PREDICT_AI_ANALYSIS_CUSTOM, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

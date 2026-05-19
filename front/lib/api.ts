@@ -7,6 +7,7 @@ export const API_ENDPOINTS = {
   STOP_YOLO: `${API_BASE_URL}/api/v1/stop-yolo`,
   YOLO_DATA: `${API_BASE_URL}/api/v1/yolo-data`,
   VIDEO_STREAM: `${API_BASE_URL}/api/v1/video-stream`,
+  DETECT: `${API_BASE_URL}/api/v1/detect`,
   DETECT_IMAGE: `${API_BASE_URL}/api/v1/detect-image`,
   SAVE_SCORE: `${API_BASE_URL}/api/v1/save-score`,
   RECENT_SCORES: `${API_BASE_URL}/api/v1/recent-scores`,
@@ -20,6 +21,7 @@ export const API_ENDPOINTS = {
   PREDICT_YOLO_DATA: `${API_BASE_URL}/api/v1/predict/yolo-data`,
   PREDICT_QUALITY: `${API_BASE_URL}/api/v1/predict/quality`,
   PREDICT_AI_ANALYSIS: `${API_BASE_URL}/api/v1/predict/ai-analysis`,
+  PREDICT_AI_ANALYSIS_CUSTOM: `${API_BASE_URL}/api/v1/predict/ai-analysis-custom`,
   PREDICT_AI_RADAR: `${API_BASE_URL}/api/v1/predict/ai-radar-data`,
 
   // 仪表板

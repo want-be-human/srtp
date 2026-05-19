@@ -35,25 +35,3 @@ export function convertYOLOToTreeData(yoloData: YOLODetectionData): TreeData {
   }
 }
 
-// 生成模拟数据（用于测试）
-export function generateMockTreeData(): TreeData {
-  const totalScore = Math.random() * 100
-  const defectScore = Math.random() * 100
-  const widthScore = Math.random() * 100
-  const smoothnessScore = Math.random() * 100
-  
-  const totalWeight = 0.7
-  const otherWeight = (1 - totalWeight) / 3
-  const finalScore = totalScore * totalWeight + (defectScore + widthScore + smoothnessScore) * otherWeight
-
-  return {
-    id: 'MOCK-' + Math.random().toString(36).substr(2, 6).toUpperCase(),
-    time: new Date(Date.now() - Math.random() * 10000000000).toISOString(),
-    defectType: ['Scratch', 'Dent', 'Stain', 'Crack', 'None'][Math.floor(Math.random() * 5)],
-    defectScore,
-    widthScore,
-    smoothnessScore,
-    totalScore,
-    finalScore: Math.min(100, Math.max(0, finalScore))
-  }
-}

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
 from openai import OpenAI
+import httpx
 
 # 使用统一配置
 import sys
@@ -12,6 +13,33 @@ sys.path.insert(0, parent_dir)
 from config import AI_API_KEY, AI_API_BASE_URL, AI_MODEL
 
 router = APIRouter()
+
+_AI_TIMEOUT = httpx.Timeout(connect=3.0, read=12.0, write=5.0, pool=5.0)
+_ai_client: Optional[OpenAI] = None
+
+
+def _get_ai_client() -> Optional[OpenAI]:
+    """惰性单例：避免每次请求重建 client、附带统一超时。"""
+    global _ai_client
+    if _ai_client is not None or not AI_API_KEY:
+        return _ai_client
+    try:
+        _ai_client = OpenAI(
+            api_key=AI_API_KEY,
+            base_url=AI_API_BASE_URL,
+            timeout=_AI_TIMEOUT,
+        )
+    except Exception as exc:
+        print(f"AI 教师客户端初始化失败: {exc}")
+        _ai_client = None
+    return _ai_client
+
+
+_FALLBACK_REPLY = (
+    "AI 教师暂时无法响应。建议：检查焊缝表面光滑度（避免凸起或凹陷）、"
+    "控制焊枪移动速度让焊缝宽度落在 4-6mm 之间、注意起弧/收弧避免气孔与裂纹。"
+    "可以稍后再问，或直接查看预测页的本地建议。"
+)
 
 class ChatInput(BaseModel):
     message: str
@@ -48,14 +76,9 @@ async def chat_with_teacher(payload: ChatInput):
     """
     与AI教师进行聊天，可以接收检测结果作为上下文。
     """
-    print(f"Received payload: {payload.model_dump_json(indent=2)}")
-    if not AI_API_KEY:
-        raise HTTPException(status_code=500, detail="AI API key not configured. Please set DEEPSEEK_API_KEY or OPENAI_API_KEY in environment.")
-
-    client = OpenAI(
-        api_key=AI_API_KEY,
-        base_url=AI_API_BASE_URL
-    )
+    client = _get_ai_client()
+    if client is None:
+        return {"response": _FALLBACK_REPLY, "fallback": True}
 
     messages = [{"role": "system", "content": "你是一个专业的焊接技术教学AI助手。你的任务是根据用户提供的检测报告和问题，给出具体、可行的分析和改进建议。"}]
 
@@ -84,10 +107,10 @@ async def chat_with_teacher(payload: ChatInput):
             messages=messages,
             max_tokens=1024,
             temperature=0.7,
-            stream=False
+            stream=False,
         )
         ai_response = response.choices[0].message.content
         return {"response": ai_response}
     except Exception as e:
-        print(f"Error calling AI API: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to get response from AI teacher. {e}")
+        print(f"AI 教师调用失败，使用本地兜底: {e}")
+        return {"response": _FALLBACK_REPLY, "fallback": True, "error": str(e)}
