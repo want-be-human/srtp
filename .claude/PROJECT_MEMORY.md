@@ -2,7 +2,8 @@
 
 > 本文档面向「未来会话中的 Claude」与「人类协作者」共同阅读。  
 > 目标是不打开代码也能掌握：项目是什么、长什么样、为什么这么写、哪里脆弱、改哪里要小心。  
-> 内容根据 2026-05-19 时点的源码梳理生成（gitee `shollorak/srtp-main` 最新版本 commit 3df9e9e）。
+> 初版基于 2026-05-19 commit `3df9e9e`，**已经过 simplify 修订**，最新 commit `a62332d`。
+> 修订历史见文末 §10。
 
 ---
 
@@ -132,20 +133,20 @@ FastAPI workers             →  读取这两个共享变量 + 写 /save-score �
 ### 2.4 综合检测器 `services/yolo/zonghe_hanjie_zhiliang_jiance_xitong.py`
 
 - 三模块串联：`WeldingQualityScorer`（光滑度）→ `PreciseWeldDetector`（宽度）→ YOLO（缺陷）。
-- 配置默认值：`confidence_threshold=0.3`（偏低、容易吃噪声）、`iou_threshold=0.45`、`optimal_width_mm=5.5`。
+- 配置默认值：`confidence_threshold=0.3`（代码默认，偏低、容易吃噪声）、`iou_threshold=0.45`、`optimal_width_mm=5.5`。
 - 缺陷扣分粒度：严重(0,1,4,6,7,8,9)-35；中等(2,5,10..14)-20；轻微(15,16)-8；class 3=良好+10。
 - 风险：confidence 0.3 在评委面前会出现「乱框」，建议演示前调 0.45+ 或允许运行期可调。
-- **同时存在两份配置**：
-  - 代码默认 `confidence_threshold=0.3`
-  - `backend/yolo_config.json` 默认 `0.5`，并写了一个不存在的 `../YOLO/models/best.pt` 路径
-  - **此处明显需要清理一致性**
+- **双源配置仍存在但已收敛**：
+  - ✅ simplify 已修复：`backend/yolo_config.json:2` 的 `yolo_model_path` 改为正确的 `services/yolo/models/best.pt`
+  - 但代码默认 0.3 vs json 0.5 的不一致**未动**——需要确认 json 实际是否被 zonghe 加载，否则改 json 没有效果。这部分留给后续 PR。
 
 ### 2.5 AI 服务 `ai_analysis.py` + `api/teacher.py`
 
 - 默认接 DeepSeek 兼容接口（`AI_API_BASE_URL=https://api.deepseek.com`, `AI_MODEL=deepseek-chat`）。
-- `ai_analysis.py` 已有规则 fallback；`teacher.py` **每次请求新建 OpenAI client**，并且 **无显式超时**，是国赛现场「通信中断」高发点。
-- 三种最大 tokens 是硬编码：800（分数解读）/1500（预测）/2000（教案）。
-- temperature 全部 0.7，没有按场景区分稳定性。
+- `ai_analysis.py` 已有规则 fallback。
+- ✅ **simplify 已修复**：`teacher.py` 改为 **模块级 lazy singleton OpenAI client + httpx.Timeout(connect=3s, read=12s)**；AI 失败时不再抛 500，而是返回 `{response: fallback_text, fallback: true}`，UI 不会显示「通信中断」。
+- 三种最大 tokens 仍硬编码：800（分数解读）/1500（预测）/2000（教案）。
+- temperature 全部 0.7。
 
 ### 2.6 预测层 `api/predict.py` + `prediction.py`
 
@@ -229,7 +230,7 @@ images:    { unoptimized: true },
 | 学校 IP | `http://10.94.91.182:3000/` | `app/page.tsx:231` | 不应进国赛包 |
 | API 主机 | `http://127.0.0.1:8000` | `app/page.tsx:431/495/551` | 应使用 `API_ENDPOINTS` |
 | CORS | `*` | `backend/main.py:30` | 演示可，发布前收紧 |
-| YOLO 置信度 | `0.3` (代码) / `0.5` (yolo_config.json) | `zonghe...py` / `yolo_config.json:3` | 双源不一致 |
+| YOLO 置信度 | `0.3` (代码) / `0.5` (yolo_config.json) | `zonghe...py` / `yolo_config.json:3` | 双源不一致（待确认 json 是否实际加载） |
 | YOLO IoU | `0.45` | 同上 | |
 | 推理 FPS | `INFERENCE_FPS=6` | `yolo_realtime.py:79` | |
 | 视频 FPS | `60` 目标 | `yolo_realtime.py:70` | 实际受相机限制 |
@@ -250,11 +251,11 @@ images:    { unoptimized: true },
 
 ### P0 — 演示稳定性必须修
 
-1. **摄像头硬编码 + 含明文密码** → 走环境变量或运行时配置面板
-2. **YOLO 置信度双源（0.3 vs 0.5）** → 选 0.45/0.5，删多余配置源
-3. **AI 调用无超时 + 无兜底** → 加 `httpx.Timeout(connect=2, read=8)`、超时立刻返回本地规则建议
-4. **MJPEG / 检测线程异常恢复** → start-yolo 失败时前端要复位
-5. **`/save-score` 不校验分数范围** → 加 0-100 夹取
+1. **摄像头硬编码 + 含明文密码** → 走环境变量或运行时配置面板（未修，**最高优先级**）
+2. **YOLO 置信度双源（0.3 vs 0.5）** → 路径已统一；阈值未统一，需先确认 json 是否真的被加载
+3. ✅ **AI 调用无超时 + 无兜底** → `teacher.py` 已加 timeout + fallback；`ai_analysis.py` 已有 fallback；其它 AI 调用点（如 lesson_plan）待巡查
+4. **MJPEG / 检测线程异常恢复** → start-yolo 失败时前端要复位（未修）
+5. ✅ **`/save-score` 不校验分数范围** → 已在 `save_score` 内加 `_clamp_score` 夹取 [0,100]
 
 ### P1 — 国赛核心增量（来自规划文档）
 
@@ -350,4 +351,34 @@ SQLite ─→ /predict → RandomForest → 历史+预测折线
 
 ---
 
-*本文档由 Claude 在 2026-05-19 基于 commit `3df9e9e` 全量代码梳理生成。如代码已经发生重大变动，请重新阅读 `git log` 与本文件对照。*
+## 10. 修订历史
+
+### v2 — 2026-05-19 (commit `a62332d`) simplify 后
+
+应用的修复（详见 commit message）：
+
+| 文件 | 改动 |
+|---|---|
+| `backend/api/teacher.py` | 模块级 lazy singleton OpenAI client + `httpx.Timeout`；失败返回 fallback 文案而非 500；删去全 payload print |
+| `backend/api/yolo_realtime.py::save_score` | 入库前 `_clamp_score` 把 4 个分数夹取到 [0,100] |
+| `backend/defect_types.py` | 新增 `get_defect_name_safe(class_id)` 返回「未匹配类别 ID: x」 |
+| `backend/yolo_config.json` | `yolo_model_path` 修正为 `services/yolo/models/best.pt` |
+| `backend/llm_output_filter/` | 删空目录 |
+| `front/lib/api.ts` | 新增 `DETECT` 和 `PREDICT_AI_ANALYSIS_CUSTOM` 端点常量 |
+| `front/app/page.tsx` | 3 处硬编码 `http://127.0.0.1:8000/api/v1/*` 全部改用 `API_ENDPOINTS` |
+| `front/components/data-tree/data-adapter.ts` | 删除从未被引用的 `generateMockTreeData` |
+
+刻意未动（避免破坏稳定性）：
+- `yolo_realtime.py` 的线程协作（capture / inference / locks）
+- `data-tree-viewer.tsx` 的 29000 粒子着色
+- 数据库字段 `spacing_score ↔ width_score` 错位
+- `app/page.tsx` 模块拆分
+- mock 数据清理（仍保留在 prediction-dashboard / lesson-plan-export）
+
+### v1 — 2026-05-19 (commit `08e796f`)
+
+首版生成，基于 gitee 同步过来的 `3df9e9e`。
+
+---
+
+*本文档由 Claude 生成与维护。如代码已经发生重大变动，请重新阅读 `git log` 与本文件对照。*
