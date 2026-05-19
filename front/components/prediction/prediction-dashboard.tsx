@@ -19,14 +19,22 @@ interface RadarData {
   ai_summary: string;
 }
 
-// 前端内置的模拟数据（作为后备，确保图表始终有数据）
-// 夹渣最常见，气孔次之，其他缺陷较少
+// 前端内置的示例数据（fallback）— 仅当后端没有返回真实数据时显示
+// TODO:replace-with-backend 真实聚合见 Phase C：删 /predict/ai-radar-data mock，改 DB 聚合
 const DEFAULT_MOCK_DEFECT_DATA = {
   "夹渣": 68, "气孔": 52, "焊瘤": 35, "咬边": 32, "未熔合": 28, "裂纹": 18
 }
 
 const DEFAULT_MOCK_SKILL_DATA = {
   "光滑度": 82, "间距控制": 78, "缺陷控制": 85, "焊缝宽度": 76, "熔深控制": 80, "焊接速度": 83
+}
+
+function MockBadge() {
+  return (
+    <span className="absolute top-2 right-3 text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
+      示例数据
+    </span>
+  )
 }
 
 // 预测图表组件
@@ -110,9 +118,9 @@ function PredictionChart({ historyData, forecastData }: {
   )
 }
 
-// 缺陷雷达图组件 - 完全使用模拟数据
+// 缺陷雷达图组件
 function DefectRadar({ radarData }: { radarData: RadarData | null }) {
-  // 使用后端返回的模拟数据，如果不可用则使用前端内置的默认模拟数据
+  const isMock = !radarData?.defect_radar
   const displayData = radarData?.defect_radar || DEFAULT_MOCK_DEFECT_DATA
 
   const data = Object.entries(displayData).map(([type, value]) => ({
@@ -122,7 +130,8 @@ function DefectRadar({ radarData }: { radarData: RadarData | null }) {
   }))
 
   return (
-    <div className="w-full h-64">
+    <div className="w-full h-64 relative">
+      {isMock && <MockBadge />}
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart data={data}>
           <PolarGrid stroke="#374151" />
@@ -146,9 +155,9 @@ function DefectRadar({ radarData }: { radarData: RadarData | null }) {
   )
 }
 
-// 技能雷达图组件 - 完全使用模拟数据
+// 技能雷达图组件
 function SkillRadar({ radarData }: { radarData: RadarData | null }) {
-  // 使用后端返回的模拟数据，如果不可用则使用前端内置的默认模拟数据
+  const isMock = !radarData?.skill_radar
   const displayData = radarData?.skill_radar || DEFAULT_MOCK_SKILL_DATA
 
   const data = Object.entries(displayData).map(([skill, value]) => ({
@@ -158,7 +167,8 @@ function SkillRadar({ radarData }: { radarData: RadarData | null }) {
   }))
 
   return (
-    <div className="w-full h-64">
+    <div className="w-full h-64 relative">
+      {isMock && <MockBadge />}
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart data={data}>
           <PolarGrid stroke="#374151" />
