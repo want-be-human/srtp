@@ -7,6 +7,7 @@ const NS = "srtp:"
 export const StorageKey = {
   CAMERA_URL: `${NS}camera_url`,
   AUTH_USER: `${NS}auth_user`,
+  DATA_TREE: `${NS}data_tree`,
   // 后续 Phase D 用到的键统一在这里登记
   // DEMO_SAFE_MODE: `${NS}demo_safe_mode`,
   // TTS_MUTED: `${NS}tts_muted`,

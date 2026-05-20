@@ -209,7 +209,9 @@ const generateParticles = (): Particle[] => {
     })
   }
 
-  pts.sort((a, b) => a.score - b.score)
+  // 降序：index 0 = 最高 score = 树冠最显眼的叶子；
+  // 数据按 slot 0,1,2... 分配时，前几条记录落在视觉中心而非看不见的深根
+  pts.sort((a, b) => b.score - a.score)
   return pts
 }
 
@@ -304,7 +306,8 @@ function ParticleTree({ resetGrowth = false, onGrowthTimeUpdate }: { resetGrowth
       
       for (let i = 0; i < INITIAL_PARTICLES.length; i++) {
         const growthState = Math.max(0, Math.min(1, (currentGrowthTime - INITIAL_PARTICLES[i].growthOrder) / 1.0))
-        const isLit = growthState > 0.1
+        // 严格数据驱动：只有已被实际检测记录占用的槽位才点亮成树
+        const isLit = growthState > 0.1 && treeData.has(i)
         let size = INITIAL_PARTICLES[i].baseSize
         
         if (isLit) {
@@ -315,9 +318,9 @@ function ParticleTree({ resetGrowth = false, onGrowthTimeUpdate }: { resetGrowth
           } else {
             tempColor.copy(leafBase).lerp(leafVariant, INITIAL_PARTICLES[i].colorVariation)
           }
-          // 生长因子影响大小
+          // 数据粒子放大，让稀疏数据点在 29k 暗骨架中突出
           const growthFactor = Math.min(1.0, growthState * 1.5)
-          size *= (0.8 + growthFactor * 0.5)
+          size *= (1.5 + growthFactor * 1.0)
           if (i === selectedParticle) size *= 2.0
         } else {
           tempColor.copy(new THREE.Color('#ffffff')).multiplyScalar(0.15 * growthState)

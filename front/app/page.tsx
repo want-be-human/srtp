@@ -51,6 +51,11 @@ export default function WeldingDetectionSystem() {
     }
   }, [currentUser, isHydrated, router])
 
+  // 预加载 /login chunk，缩短登出跳转延迟（生产环境立即生效；dev 模式由 Next.js 按需编译，不会真正预热）
+  useEffect(() => {
+    router.prefetch("/login")
+  }, [router])
+
   const handleLogout = () => {
     logout()
     router.replace("/login")
@@ -170,9 +175,22 @@ export default function WeldingDetectionSystem() {
     }
   }
 
-  // 登录 gate 渲染：hydrate 前与未登录时返回空，等 useEffect 把用户跳到 /login
+  // 登录 gate：hydrate 前 & 跳转期间显示 loading，避免黑屏（dev 模式 /login chunk 冷编译会拖几百毫秒）
   if (!isHydrated || !currentUser) {
-    return null
+    return (
+      <div
+        role="status"
+        aria-live="polite"
+        className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800 text-white"
+      >
+        <div className="text-center">
+          <div className="animate-spin h-8 w-8 border-2 border-white border-t-transparent rounded-full mx-auto mb-3"></div>
+          <p className="text-sm text-gray-400">
+            {!isHydrated ? "正在加载..." : "正在跳转到登录页..."}
+          </p>
+        </div>
+      </div>
+    )
   }
 
   return (
