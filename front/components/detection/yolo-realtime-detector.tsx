@@ -8,6 +8,7 @@ import { API_ENDPOINTS } from "@/lib/api"
 import { StorageKey, getString, setString, remove } from "@/lib/storage"
 import { useDataTree } from '@/components/data-tree/data-tree-context'
 import { convertYOLOToTreeData } from '@/components/data-tree/data-adapter'
+import { useAuth } from "@/contexts/AuthContext"
 
 // 摄像头来源优先级：localStorage(srtp:camera_url) → NEXT_PUBLIC_CAMERA_URL → 空字符串
 // 空字符串告诉后端 fallback 到 camera_id=0（本地 USB / 有线相机）
@@ -47,6 +48,7 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
   const [cameraUrl, setCameraUrl] = useState<string>('')  // 当前生效的摄像头源
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { addTreeData } = useDataTree()
+  const { currentUser } = useAuth()
 
   // 客户端挂载后再读 localStorage / env，避免 SSR 水合不一致
   useEffect(() => {
@@ -201,7 +203,10 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
           defect_score: currentScores.defectType,
           timestamp: currentScores.timestamp,
           actual_width: currentScores.actualWidth,
-          defect_type_name: currentScores.defectTypeName
+          defect_type_name: currentScores.defectTypeName,
+          student_id: currentUser?.student_id ?? null,
+          student_name: currentUser?.name ?? null,
+          batch_id: currentUser?.batch_id ?? null,
         })
       })
 

@@ -159,6 +159,10 @@ class YOLODetectionData(BaseModel):
     timestamp: Optional[str] = None
     actual_width: Optional[float] = None
     defect_type_name: Optional[str] = "无缺陷"
+    # 未登录时三项均为 None；DB 列已 nullable，孤立旧记录另由脚本回填
+    student_id: Optional[str] = None
+    student_name: Optional[str] = None
+    batch_id: Optional[str] = None
 
 @router.get("/predict", response_model=PredictionResponse)
 async def get_prediction(db: Session = Depends(get_db)):
@@ -913,7 +917,12 @@ async def receive_yolo_detection_data(yolo_data: YOLODetectionData, db: Session 
             smoothness_score=detection_data['smoothness_score'],
             spacing_score=detection_data['width_score'],
             defect_type_score=detection_data['defect_score'],
-            total_score=detection_data['total_score']
+            total_score=detection_data['total_score'],
+            student_id=yolo_data.student_id,
+            student_name=yolo_data.student_name,
+            batch_id=yolo_data.batch_id,
+            actual_width=detection_data['actual_width'],
+            defect_type_name=detection_data['defect_type_name'],
         )
         db.add(db_record)
         db.commit()
