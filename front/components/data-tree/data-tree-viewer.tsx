@@ -362,7 +362,7 @@ function ParticleTree({
             if (i === selectedParticle) size *= 2.0
           } else {
             // 无数据的 leaf/flower：暗白骨架，让树冠保留轮廓但不抢戏
-            tempColor.copy(dimWhite).multiplyScalar(0.08 * growthState)
+            tempColor.copy(dimWhite).multiplyScalar(0.30 * growthState)
             size *= 0.5
           }
         }
