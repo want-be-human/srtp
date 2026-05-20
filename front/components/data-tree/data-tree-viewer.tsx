@@ -361,8 +361,8 @@ function ParticleTree({
             }
             if (i === selectedParticle) size *= 2.0
           } else {
-            // 无数据的 leaf/flower：保留 C3 之前的暗白骨架，让树冠仍有轮廓
-            tempColor.copy(dimWhite).multiplyScalar(0.15 * growthState)
+            // 无数据的 leaf/flower：暗白骨架，让树冠保留轮廓但不抢戏
+            tempColor.copy(dimWhite).multiplyScalar(0.08 * growthState)
             size *= 0.5
           }
         }
