@@ -87,6 +87,23 @@ A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完
   - 调 `/student-comparison` + `/batch-list`，同屏对比平均分、技能雷达、检测次数、最近趋势
   - 加分项：双数据树并排渲染
 
+- **C5 检测态跨模块保活**（C3 复核期暴露的预存在 bug）
+  - 现象：`焊缝检测` → 点「咨询 AI 教师」（`setActiveModule("teacher")`）→ 切回 `焊缝检测` 时 `currentScores / videoStreamUrl / isDetecting` 全部归零，无法继续「发送到预测系统」
+  - 根因：`front/app/page.tsx` `renderMainContent()` 用 switch 渲染，切换 `activeModule` 时上一个模块整体卸载，`YOLORealtimeDetector` 的本地 React state 跟着丢
+  - 修法（首选）：把 `currentScores`（甚至 `isDetecting / videoStreamUrl`）状态上提到 `WeldingDetectionSystem`，作为 props 下传给 detector，使其变受控组件——切回来时 props 还原。改动量约 30 行
+  - 备选：模块卸载改为 `display: none` 切换（不推荐，会带累积内存）
+
+- **C6 预测端点按学生过滤 + 取消 30 条上限**（C3 复核期发现）
+  - 现象：登录不同学生看到的预测/技能雷达完全一样；折线图永远只有最近 30 条
+  - 根因 1：`backend/api/predict.py::get_prediction` 不接受 `student_id` 参数，`_get_detection_data_from_db` 也不过滤；C2 把 `student_id` 入库了但消费端没接通
+  - 根因 2：[predict.py:221](backend/api/predict.py) 硬编码 `recent_data = detection_data[-30:]`
+  - 修法：
+    - `/predict` 加可选 query 参数 `student_id`；`_get_detection_data_from_db` 多一个 `student_id` 过滤条件
+    - 前端预测面板 fetch 时从 `AuthContext.currentUser.student_id` 取并拼到 URL
+    - 删 `[-30:]` 切片，改用一个稍大的上限常量（如 200）做防御性截断
+    - 预测缓存 key 要加 `student_id` 维度，否则缓存命中会跨学生串味
+  - 验证：A 学生存 10 条都是 70-80 分的数据，B 学生存 10 条都是 90+ 的数据；切换登录应能看到不同的折线、雷达、forecast
+
 ### Phase D — 提案新增项（Phase B/C 之外）
 
 按优先级：
@@ -129,6 +146,9 @@ A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完
 
 - 2026-05-27：只修 bug，不加功能；连跑 3 遍演示
 - 2026-05-28：打包备份（比赛电脑、U 盘、云盘）
+- 演示注意事项：
+  - **不要用 `npm run dev` 跑演示**。dev server 冷启动会按需编译路由（首次访问 `/` 因为编译未完成而返回 `_not-found` 404，刷新一次才正常）；务必用 `npm run build && npm run start` 跑生产模式
+  - 生产构建后预热一遍：启动后浏览器先访问一次 `/login` 和 `/`，让 Next.js 完成首次响应
 
 ---
 
