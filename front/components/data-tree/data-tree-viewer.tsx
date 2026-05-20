@@ -218,11 +218,23 @@ const generateParticles = (): Particle[] => {
 const INITIAL_PARTICLES = generateParticles()
 
 // --- 粒子树组件 ---
-function ParticleTree({ resetGrowth = false, onGrowthTimeUpdate }: { resetGrowth?: boolean, onGrowthTimeUpdate?: (time: number) => void }) {
+function ParticleTree({
+  resetGrowth = false,
+  onGrowthTimeUpdate,
+  treeDataOverride,
+}: {
+  resetGrowth?: boolean
+  onGrowthTimeUpdate?: (time: number) => void
+  treeDataOverride?: Map<number, TreeData>
+}) {
   const geometryRef = useRef<THREE.BufferGeometry>(null)
   const materialRef = useRef<THREE.ShaderMaterial>(null)
   const [growthStarted, setGrowthStarted] = useState(false)
-  const { treeData, selectedParticle, setSelectedParticle } = useDataTree()
+  const ctx = useDataTree()
+  // PK 视图传入对比对象的 treeData；不传则走 Context（数据树主页面）
+  const treeData = treeDataOverride ?? ctx.treeData
+  const selectedParticle = treeDataOverride ? null : ctx.selectedParticle
+  const setSelectedParticle = treeDataOverride ? () => {} : ctx.setSelectedParticle
   
   const { positions, colors, sizes, windFactors, growthOrders, colorVariations, fallPhases } = useMemo(() => {
     const pos = new Float32Array(INITIAL_PARTICLES.length * 3)
@@ -535,9 +547,16 @@ function CameraRig({ growthTime }: { growthTime: number }) {
 }
 
 // --- 主数据树查看器组件 ---
-export function DataTreeViewer({ theme = 'dark', resetGrowth = false }: { theme?: 'dark' | 'light', resetGrowth?: boolean }) {
-  const { treeData } = useDataTree()
-  const logEntries = Array.from(treeData.entries()).reverse().slice(0, 100)
+export function DataTreeViewer({
+  theme = 'dark',
+  resetGrowth = false,
+  treeData: treeDataOverride,
+}: {
+  theme?: 'dark' | 'light'
+  resetGrowth?: boolean
+  /** PK 模式下显式传入另一个学生的 treeData；不传则用 Context 的当前学生切片 */
+  treeData?: Map<number, TreeData>
+}) {
   const cameraRef = useRef<any>(null)
   const [growthTime, setGrowthTime] = useState(0)
 
@@ -566,9 +585,10 @@ export function DataTreeViewer({ theme = 'dark', resetGrowth = false }: { theme?
           zoomSpeed={0.8}   // 稍微降低缩放速度
         />
         <group scale={[1.8, 1.8, 1.8]} position={[0, -4, 0]}>
-          <ParticleTree 
-            resetGrowth={resetGrowth} 
+          <ParticleTree
+            resetGrowth={resetGrowth}
             onGrowthTimeUpdate={setGrowthTime}
+            treeDataOverride={treeDataOverride}
           />
         </group>
       </Canvas>

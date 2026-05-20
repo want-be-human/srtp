@@ -6,7 +6,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Home, Settings, User, Activity, TrendingUp, Database, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut } from "lucide-react"
+import { Home, Settings, User, Activity, TrendingUp, Database, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut, Trophy } from "lucide-react"
 import Image from "next/image"
 import { API_ENDPOINTS } from "@/lib/api"
 import { useAuth } from "@/contexts/AuthContext"
@@ -16,6 +16,7 @@ import { PredictionDashboardContent } from "../components/prediction/prediction-
 import { YOLORealtimeDetector } from "../components/detection/yolo-realtime-detector"
 import { ParticleField } from "../components/particle-field"
 import { DataTreeContent } from "../components/data-tree/data-tree-content"
+import { StudentComparisonContent } from "../components/comparison/student-comparison"
 
 // 定义检测结果的类型接口
 interface DetectionResult {
@@ -91,6 +92,7 @@ export default function WeldingDetectionSystem() {
     { id: "teacher", label: "AI 教师", icon: GraduationCap },
     { id: "prediction", label: "智能预测", icon: Brain },
     { id: "data-tree", label: "数据树", icon: GitBranch },
+    { id: "comparison", label: "学生对比", icon: Trophy },
     { id: "analysis", label: "报告导出", icon: FileDown },
     { id: "settings", label: "关于我们", icon: Settings },
   ]
@@ -140,6 +142,8 @@ export default function WeldingDetectionSystem() {
         return "bg-gradient-to-br from-slate-900 via-orange-900 to-slate-800"
       case "prediction":
         return "bg-gradient-to-br from-slate-900 via-green-900 to-slate-800"
+      case "comparison":
+        return "bg-gradient-to-br from-slate-900 via-purple-900 to-slate-800"
       case "analysis":
         return "bg-gradient-to-br from-slate-900 via-cyan-900 to-slate-800"
       default:
@@ -166,6 +170,8 @@ export default function WeldingDetectionSystem() {
         return <PredictionDashboardContent />
       case "data-tree":
         return <DataTreeContent />
+      case "comparison":
+        return <StudentComparisonContent />
       case "analysis":
         return <LessonPlanExportContent />
       case "settings":

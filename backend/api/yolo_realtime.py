@@ -473,10 +473,17 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
 
 
 @router.get("/recent-scores")
-async def get_recent_scores(limit: int = 10, db: SessionLocal = Depends(get_db)):
-    """获取最近的检测分数记录"""
+async def get_recent_scores(
+    limit: int = 10,
+    student_id: Optional[str] = None,
+    db: SessionLocal = Depends(get_db),
+):
+    """获取最近的检测分数记录（可选按 student_id 过滤，用于 PK 对比）"""
     try:
-        records = db.query(models.WeldingRecord).order_by(
+        query = db.query(models.WeldingRecord)
+        if student_id:
+            query = query.filter(models.WeldingRecord.student_id == student_id)
+        records = query.order_by(
             models.WeldingRecord.timestamp.desc()
         ).limit(limit).all()
 
