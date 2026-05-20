@@ -311,7 +311,7 @@ function ParticleTree({
       //   trunk（树根/主干/树枝）= 时间驱动的棕色骨架，始终展示（与数据无关）
       //   leaf（树冠叶子）= 数据驱动；按 totalScore 分档 90+ 绿 / 70-89 黄 / <70 红，尺寸红>黄>绿
       //   flower（leaf 池里 6% 预分配）= 有数据时显示粉色「花朵」
-      //   无数据的 leaf/flower 不显示（颜色 0 + size 收成 ~0）
+      //   无数据的 leaf/flower 退化为暗白骨架，保留树冠的轮廓感
       const currentGrowthTime = materialRef.current.uniforms.growthTime.value
       const trunkBase = new THREE.Color('#D2B48C')
       const trunkVariant = new THREE.Color('#DEB887')
@@ -345,25 +345,25 @@ function ParticleTree({
           if (hasData) {
             if (particle.type === 'flower') {
               tempColor.copy(flowerBase).lerp(flowerVariant, particle.colorVariation)
-              size *= 2.0
+              size *= 4.0
             } else {
               const score = data!.totalScore ?? data!.finalScore ?? 0
               if (score >= 90) {
                 tempColor.copy(scoreHigh)
-                size *= 1.5
+                size *= 3.0
               } else if (score >= 70) {
                 tempColor.copy(scoreMid)
-                size *= 2.5
+                size *= 4.0
               } else {
                 tempColor.copy(scoreLow)
-                size *= 3.5
+                size *= 5.0
               }
             }
             if (i === selectedParticle) size *= 2.0
           } else {
-            // 无数据的 leaf/flower 隐去
-            tempColor.setRGB(0, 0, 0)
-            size *= 0.01
+            // 无数据的 leaf/flower：保留 C3 之前的暗白骨架，让树冠仍有轮廓
+            tempColor.copy(dimWhite).multiplyScalar(0.15 * growthState)
+            size *= 0.5
           }
         }
 
