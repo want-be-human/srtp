@@ -331,7 +331,7 @@ function ParticleTree({
         if (particle.type === 'trunk') {
           // 树干类：时间驱动，与 treeData 无关
           if (growthState > 0.1) {
-            tempColor.copy(trunkBase).lerp(trunkVariant, particle.colorVariation)
+            tempColor.copy(trunkBase).lerp(trunkVariant, particle.colorVariation).multiplyScalar(0.65)
             const growthFactor = Math.min(1.0, growthState * 1.5)
             size *= (0.8 + growthFactor * 0.5)
           } else {
