@@ -6,7 +6,6 @@ import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import logging
-from concurrent.futures import ThreadPoolExecutor
 
 # 使用统一配置
 from config import AI_API_KEY, AI_API_BASE_URL, AI_MODEL
@@ -58,15 +57,8 @@ class AIAnalysisService:
             return None
 
     async def _call_openai_api_async(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> Optional[str]:
-        """异步调用OpenAI API"""
-        loop = asyncio.get_event_loop()
-        with ThreadPoolExecutor() as executor:
-            future = loop.run_in_executor(
-                executor,
-                self._call_openai_api,
-                messages, max_tokens
-            )
-            return await future
+        """异步调用 OpenAI API：openai 客户端是 sync 实现，offload 到默认线程池避免阻塞 event loop。"""
+        return await asyncio.to_thread(self._call_openai_api, messages, max_tokens)
 
     async def analyze_latest_scores(self, scores: Dict[str, float]) -> Dict[str, Any]:
         """基于最新检测分数进行AI分析"""
@@ -101,7 +93,7 @@ class AIAnalysisService:
             {"role": "user", "content": user_prompt}
         ]
 
-        ai_response = self._call_openai_api(messages, max_tokens=800)
+        ai_response = await self._call_openai_api_async(messages, max_tokens=800)
 
         if ai_response:
             return {
@@ -181,7 +173,7 @@ class AIAnalysisService:
             }
         ]
 
-        ai_response = self._call_openai_api(messages, max_tokens=1500)
+        ai_response = await self._call_openai_api_async(messages, max_tokens=1500)
 
         if ai_response:
             try:
@@ -268,7 +260,7 @@ class AIAnalysisService:
             }
         ]
 
-        ai_response = self._call_openai_api(messages, max_tokens=2000)
+        ai_response = await self._call_openai_api_async(messages, max_tokens=2000)
 
         if ai_response:
             try:

@@ -13,7 +13,7 @@ import { useAuth } from "@/contexts/AuthContext"
 import { LessonPlanExportContent } from "../components/lesson-plan/lesson-plan-export"
 import { AITeacherChatContent } from "../components/ai-teacher/ai-teacher-chat"
 import { PredictionDashboardContent } from "../components/prediction/prediction-dashboard"
-import { YOLORealtimeDetector } from "../components/detection/yolo-realtime-detector"
+import { YOLORealtimeDetector, initialYOLOLiveState, type YOLOLiveState } from "../components/detection/yolo-realtime-detector"
 import { ParticleField } from "../components/particle-field"
 import { DataTreeContent } from "../components/data-tree/data-tree-content"
 import { StudentComparisonContent } from "../components/comparison/student-comparison"
@@ -35,7 +35,8 @@ interface DetectionResult {
 export default function WeldingDetectionSystem() {
   const [activeModule, setActiveModule] = useState("dashboard")
   const [detectionResults, setDetectionResults] = useState<DetectionResult | null>(null)
-  const [currentYOLOScores, setCurrentYOLOScores] = useState<any>(null) // 存储当前YOLO检测分数
+  // 检测态由父级持有，避免切模块时 detector 卸载丢失 isDetecting/分数/视频流 URL
+  const [yoloLive, setYoloLive] = useState<YOLOLiveState>(initialYOLOLiveState)
   const [yoloDataForTeacher, setYoloDataForTeacher] = useState<any>(null) // 存储要发送给AI教师的YOLO数据
   const [realTimeData, setRealTimeData] = useState({
     dataPoints: 0,
@@ -97,16 +98,9 @@ export default function WeldingDetectionSystem() {
     { id: "settings", label: "关于我们", icon: Settings },
   ]
 
-  // 处理YOLO数据发送到预测系统
+  // 处理YOLO数据发送到预测系统（detector 内部已发 POST，这里只是 hook 点）
   const handleYOLODataSend = async (yoloData: any) => {
-    try {
-      console.log('发送YOLO数据到预测系统:', yoloData)
-      // 这里可以添加发送到预测系统的逻辑
-      // 暂时只是存储数据
-      setCurrentYOLOScores(yoloData)
-    } catch (error) {
-      console.error('发送YOLO数据失败:', error)
-    }
+    console.log('发送YOLO数据到预测系统:', yoloData)
   }
 
   // 处理YOLO数据咨询AI教师
@@ -160,7 +154,8 @@ export default function WeldingDetectionSystem() {
           setActiveModule={setActiveModule}
           setDetectionResults={setDetectionResults}
           detectionResults={detectionResults}
-          onYOLOScoreUpdate={setCurrentYOLOScores}
+          yoloLive={yoloLive}
+          setYoloLive={setYoloLive}
           sendYOLODataToPrediction={handleYOLODataSend}
           onConsultTeacher={handleConsultTeacher}
         />
@@ -457,11 +452,12 @@ function DashboardContent({ realTimeData, setActiveModule }: any) {
 }
 
 // 焊缝检测模块
-function DetectionContent({ setActiveModule, setDetectionResults, detectionResults, onYOLOScoreUpdate, sendYOLODataToPrediction, onConsultTeacher }: {
+function DetectionContent({ setActiveModule, setDetectionResults, detectionResults, yoloLive, setYoloLive, sendYOLODataToPrediction, onConsultTeacher }: {
   setActiveModule: (module: string) => void,
   setDetectionResults: (results: DetectionResult | null) => void,
   detectionResults: DetectionResult | null,
-  onYOLOScoreUpdate?: (scores: any) => void,
+  yoloLive: YOLOLiveState,
+  setYoloLive: React.Dispatch<React.SetStateAction<YOLOLiveState>>,
   sendYOLODataToPrediction?: (scores: any) => Promise<void>,
   onConsultTeacher?: (scores: any) => void
 }) {
@@ -663,8 +659,9 @@ function DetectionContent({ setActiveModule, setDetectionResults, detectionResul
           {/* YOLORealtimeDetector 自带完整布局 */}
           <div className="h-[calc(100%-60px)]">
             <YOLORealtimeDetector
-              onScoreUpdate={onYOLOScoreUpdate}
-              onSendData={sendYOLODataToPrediction || (() => Promise.resolve())}
+              liveState={yoloLive}
+              setLiveState={setYoloLive}
+              onSendData={sendYOLODataToPrediction}
               onConsultTeacher={onConsultTeacher}
             />
           </div>

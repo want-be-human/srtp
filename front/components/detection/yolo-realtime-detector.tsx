@@ -19,7 +19,7 @@ function resolveCameraUrl(): string {
 }
 
 // YOLO检测结果的类型定义
-interface YOLODetectionResult {
+export interface YOLODetectionResult {
   smoothness: number;      // 光滑度评分
   width: number;          // 宽度评分
   defectType: number;     // 缺陷类型评分
@@ -32,20 +32,39 @@ interface YOLODetectionResult {
   detectedDefects?: string[]; // 检测到的缺陷列表
 }
 
+// 跨模块保活的检测态：activeModule switch 会卸载检测组件，这部分必须由父级持有
+export interface YOLOLiveState {
+  isDetecting: boolean
+  currentScores: YOLODetectionResult | null
+  videoStreamUrl: string
+  uploadedImage: string | null
+}
+
+export const initialYOLOLiveState: YOLOLiveState = {
+  isDetecting: false,
+  currentScores: null,
+  videoStreamUrl: '',
+  uploadedImage: null,
+}
+
 interface YOLORealtimeDetectorProps {
-  onScoreUpdate?: (scores: YOLODetectionResult) => void;
+  liveState: YOLOLiveState
+  setLiveState: React.Dispatch<React.SetStateAction<YOLOLiveState>>
   onSendData?: (scores: YOLODetectionResult) => void;
   onConsultTeacher?: (scores: YOLODetectionResult) => void;
 }
 
-export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeacher }: YOLORealtimeDetectorProps) {
-  const [isDetecting, setIsDetecting] = useState(false)
-  const [currentScores, setCurrentScores] = useState<YOLODetectionResult | null>(null)
+export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onConsultTeacher }: YOLORealtimeDetectorProps) {
+  const { isDetecting, currentScores, videoStreamUrl, uploadedImage } = liveState
+  const setIsDetecting = (v: boolean) => setLiveState((s) => ({ ...s, isDetecting: v }))
+  const setCurrentScores = (v: YOLODetectionResult | null) => setLiveState((s) => ({ ...s, currentScores: v }))
+  const setVideoStreamUrl = (v: string) => setLiveState((s) => ({ ...s, videoStreamUrl: v }))
+  const setUploadedImage = (v: string | null) => setLiveState((s) => ({ ...s, uploadedImage: v }))
+
+  // 本地态：error / isUploading / cameraUrl 是「重进就该重置」的瞬时状态
   const [error, setError] = useState<string>('')
-  const [videoStreamUrl, setVideoStreamUrl] = useState<string>('')
-  const [uploadedImage, setUploadedImage] = useState<string | null>(null)
   const [isUploading, setIsUploading] = useState(false)
-  const [cameraUrl, setCameraUrl] = useState<string>('')  // 当前生效的摄像头源
+  const [cameraUrl, setCameraUrl] = useState<string>('')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { addTreeData } = useDataTree()
   const { currentUser } = useAuth()
@@ -159,6 +178,8 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
   }
 
   // 检测循环 - 定期获取检测数据
+  // 注意：组件因切换模块而 unmount 时，interval 被清；重新 mount 时若 isDetecting=true（父级保活），
+  // useEffect 会自动重新启动轮询。后端 /start-yolo 的线程不受前端 unmount 影响。
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null
 
@@ -167,12 +188,8 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
         const newScores = await fetchYOLOData()
         if (newScores) {
           setCurrentScores(newScores)
-          // 回调给父组件
-          if (onScoreUpdate) {
-            onScoreUpdate(newScores)
-          }
         }
-      }, 1500) // 每1.5秒获取一次数据（优化API负载）
+      }, 1500)
     }
 
     return () => {
@@ -180,7 +197,7 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
         clearInterval(interval)
       }
     }
-  }, [isDetecting, onScoreUpdate])
+  }, [isDetecting])
 
   // 发送当前数据到后端和数据树
   const handleSendData = async () => {
@@ -287,9 +304,6 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
               detectedDefects: result.data.detected_defects || []
             }
             setCurrentScores(scores)
-            if (onScoreUpdate) {
-              onScoreUpdate(scores)
-            }
           } else {
             throw new Error(result.message || '检测失败')
           }
@@ -313,14 +327,9 @@ export function YOLORealtimeDetector({ onScoreUpdate, onSendData, onConsultTeach
     setCurrentScores(null)
   }
 
-  // 组件卸载时清理资源
-  useEffect(() => {
-    return () => {
-      if (isDetecting) {
-        stopYOLODetection()
-      }
-    }
-  }, [])
+  // 组件 unmount 不再调用 stopYOLODetection——切到 AI 教师等模块时检测线程要保活。
+  // 副作用：tab 完全关闭后后端的 capture/inference 线程仍会运行（is_detecting 不会因前端断流复位），
+  // 需要用户主动点「停止」或调 /stop-yolo 才能停。后端 idle 自停留作后续改进。
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return "from-green-500 to-emerald-500"

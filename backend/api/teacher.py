@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
@@ -102,7 +104,9 @@ async def chat_with_teacher(payload: ChatInput):
     messages.append({"role": "user", "content": user_message})
 
     try:
-        response = client.chat.completions.create(
+        # openai 客户端是 sync 实现，直接 await 会阻塞 event loop——offload 到线程池
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
             model=AI_MODEL,
             messages=messages,
             max_tokens=1024,

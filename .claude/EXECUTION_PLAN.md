@@ -90,8 +90,15 @@ A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完
 - **C5 检测态跨模块保活**（C3 复核期暴露的预存在 bug）
   - 现象：`焊缝检测` → 点「咨询 AI 教师」（`setActiveModule("teacher")`）→ 切回 `焊缝检测` 时 `currentScores / videoStreamUrl / isDetecting` 全部归零，无法继续「发送到预测系统」
   - 根因：`front/app/page.tsx` `renderMainContent()` 用 switch 渲染，切换 `activeModule` 时上一个模块整体卸载，`YOLORealtimeDetector` 的本地 React state 跟着丢
-  - 修法（首选）：把 `currentScores`（甚至 `isDetecting / videoStreamUrl`）状态上提到 `WeldingDetectionSystem`，作为 props 下传给 detector，使其变受控组件——切回来时 props 还原。改动量约 30 行
-  - 备选：模块卸载改为 `display: none` 切换（不推荐，会带累积内存）
+  - 修法（首选）：把 `currentScores / isDetecting / videoStreamUrl / uploadedImage` 上提到 `WeldingDetectionSystem`（C5 复核期发现 uploadedImage 也要带上），作为 `liveState` 单一 props 下传给 detector
+  - 顺带：移除 detector 的 unmount 自动 stopYOLODetection——切走时检测线程要保活
+  - 副作用：tab 关掉后端 capture/inference 线程不会自停，需要用户手动停或调 /stop-yolo（idle 自停留作 D 阶段改进）
+
+- **C5.1 后端 AI 调用异步化**（C5 复核期发现）
+  - 现象：触发智能预测的 AI 分析（`/predict/ai-analysis`）会阻塞 30+ 秒，期间所有其他端点（`/student-comparison` / `/quick-stats`）排队不响应；演示中切到学生对比页面会出现下拉空、雷达卡住
+  - 根因：`ai_analysis.py` 的 `async def analyze_*` 内部直接调用 sync `_call_openai_api`（3 处），openai 客户端的同步 HTTP 阻塞 FastAPI 的 event loop；`api/teacher.py::chat_with_teacher` 同模式
+  - 修法：`ai_analysis.py` 3 处改用 `await _call_openai_api_async`（项目已经实现了这个 async 版本但没人用）；`teacher.py` 用 `await asyncio.to_thread(client.chat.completions.create, ...)` offload 到线程池
+  - 影响：演示期任何 AI 调用都不会再卡其他模块
 
 - **C6 预测端点按学生过滤 + 取消 30 条上限**（C3 复核期发现）
   - 现象：登录不同学生看到的预测/技能雷达完全一样；折线图永远只有最近 30 条
