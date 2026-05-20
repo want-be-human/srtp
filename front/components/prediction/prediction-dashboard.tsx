@@ -4,6 +4,8 @@ import React, { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts"
 import { API_ENDPOINTS } from "@/lib/api"
+import { getPredictionCacheKey } from "@/lib/storage"
+import { useAuth } from "@/contexts/AuthContext"
 
 interface PredictionData {
   history: Record<string, number>;
@@ -234,6 +236,7 @@ function AIOutputBox({ aiAnalysis }: { aiAnalysis?: any }) {
 }
 
 export function PredictionDashboardContent() {
+  const { currentUser } = useAuth()
   const [predictionData, setPredictionData] = useState<PredictionData | null>(null)
   const [radarData, setRadarData] = useState<RadarData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -241,14 +244,17 @@ export function PredictionDashboardContent() {
   const [aiAnalysis, setAiAnalysis] = useState<any>(null)
   const [aiLoading, setAiLoading] = useState(false)
 
-  // 获取预测数据的函数（可复用）
+  // 给 endpoint 拼上 student_id 过滤；localStorage 缓存 key 按学生分桶，避免切账号串味
+  const studentId = currentUser?.student_id ?? null
+  const studentQuery = studentId ? `?student_id=${encodeURIComponent(studentId)}` : ""
+  const cacheKey = getPredictionCacheKey(studentId)
+
   const fetchPredictionData = async (isBackground = false) => {
     try {
       if (!isBackground) setError(null)
 
-      // 先尝试从本地缓存读取，立即显示（提升用户体验）
       if (!isBackground) {
-        const cachedData = localStorage.getItem('prediction_cache')
+        const cachedData = localStorage.getItem(cacheKey)
         if (cachedData) {
           try {
             setPredictionData(JSON.parse(cachedData))
@@ -262,11 +268,9 @@ export function PredictionDashboardContent() {
         }
       }
 
-      // 向后端获取最新数据
-      const response = await fetch(API_ENDPOINTS.PREDICT)
+      const response = await fetch(`${API_ENDPOINTS.PREDICT}${studentQuery}`)
       if (!response.ok) {
-        // 如果后端没运行但有缓存，不报错，继续显示缓存
-        if (localStorage.getItem('prediction_cache') && !isBackground) {
+        if (localStorage.getItem(cacheKey) && !isBackground) {
           console.warn('后端暂不可用，继续显示缓存数据')
           setLoading(false)
           return
@@ -276,28 +280,25 @@ export function PredictionDashboardContent() {
 
       const data = await response.json()
       setPredictionData(data)
-      localStorage.setItem('prediction_cache', JSON.stringify(data))
-      localStorage.setItem('prediction_cache_time', Date.now().toString())
-      localStorage.setItem('shared_total_detections', String(data.total_detections || 0))
+      localStorage.setItem(cacheKey, JSON.stringify(data))
+      localStorage.setItem(`${cacheKey}:time`, Date.now().toString())
       setLoading(false)
       if (!isBackground) {
         console.log('数据更新完成，total_detections:', data.total_detections, 'history点数:', Object.keys(data.history || {}).length)
       }
 
-      // 首次加载时异步获取AI分析数据和雷达图数据（不阻塞主要显示）
       if (!isBackground) {
         setTimeout(async () => {
           try {
             setAiLoading(true)
 
-            // 获取AI分析
-            const aiResponse = await fetch(API_ENDPOINTS.PREDICT_AI_ANALYSIS)
+            const aiResponse = await fetch(`${API_ENDPOINTS.PREDICT_AI_ANALYSIS}${studentQuery}`)
             if (aiResponse.ok) {
               const aiData = await aiResponse.json()
               setAiAnalysis(aiData)
             }
 
-            // 获取AI雷达图数据
+            // 雷达端点目前是 mock 数据（D2 才会接入真实统计），先不拼 student_id
             const radarResponse = await fetch(API_ENDPOINTS.PREDICT_AI_RADAR)
             if (radarResponse.ok) {
               const radarResult = await radarResponse.json()
@@ -312,7 +313,6 @@ export function PredictionDashboardContent() {
       }
     } catch (error) {
       console.error("获取预测数据失败:", error)
-      // 只有没有缓存数据时才显示错误
       if (!predictionData) {
         setError(error instanceof Error ? error.message : "未知错误")
       }
@@ -321,16 +321,14 @@ export function PredictionDashboardContent() {
   }
 
   useEffect(() => {
-    // 首次加载
     fetchPredictionData(false)
-
-    // 每5秒后台静默刷新数据（优化API负载）
+    // 5 秒静默刷新；studentId 变化会重启 effect，确保切学生时立即拉新数据
     const interval = setInterval(() => {
       fetchPredictionData(true)
     }, 5000)
-
     return () => clearInterval(interval)
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [studentId])
 
   if (loading) {
     return (

@@ -8,10 +8,16 @@ export const StorageKey = {
   CAMERA_URL: `${NS}camera_url`,
   AUTH_USER: `${NS}auth_user`,
   DATA_TREE: `${NS}data_tree`,
+  PREDICTION_CACHE: `${NS}prediction_cache`,
   // 后续 Phase D 用到的键统一在这里登记
   // DEMO_SAFE_MODE: `${NS}demo_safe_mode`,
   // TTS_MUTED: `${NS}tts_muted`,
 } as const
+
+/** 预测结果按学生切片缓存的 key。studentId 为空时回落到 guest 槽。 */
+export function getPredictionCacheKey(studentId?: string | null): string {
+  return `${StorageKey.PREDICTION_CACHE}:${studentId || "guest"}`
+}
 
 // JSON helper：方便存复杂对象。失败时静默返回 fallback。
 export function getJSON<T>(key: string, fallback: T): T {

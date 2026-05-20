@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Camera, CameraOff, Settings, TrendingUp, Upload, Image as ImageIcon } from "lucide-react"
 import { API_ENDPOINTS } from "@/lib/api"
-import { StorageKey, getString, setString, remove } from "@/lib/storage"
+import { StorageKey, getString, setString, remove, getPredictionCacheKey } from "@/lib/storage"
 import { useDataTree } from '@/components/data-tree/data-tree-context'
 import { convertYOLOToTreeData } from '@/components/data-tree/data-adapter'
 import { useAuth } from "@/contexts/AuthContext"
@@ -230,9 +230,10 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
       if (response.ok) {
         const result = await response.json()
 
-        // 清除前端缓存，确保折线图下次刷新时获取最新数据
-        localStorage.removeItem('prediction_cache')
-        localStorage.removeItem('prediction_cache_time')
+        // 清除该学生的前端预测缓存，确保折线图下次刷新时获取最新数据
+        const ckey = getPredictionCacheKey(currentUser?.student_id)
+        localStorage.removeItem(ckey)
+        localStorage.removeItem(`${ckey}:time`)
         console.log('已清除预测缓存，折线图将实时更新')
 
         // 2. 同时发送到数据树

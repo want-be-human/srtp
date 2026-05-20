@@ -46,15 +46,26 @@ router = APIRouter()
 # 缓存配置
 PREDICTION_CACHE_THRESHOLD = 1  # 每1次检测就重新计算预测（实时更新）
 CACHE_TTL_SECONDS = 60  # 缓存有效期60秒
+# 历史数据展示上限：之前硬编码 [-30:] 把图表卡死在 30 点，现在放宽
+PREDICTION_HISTORY_LIMIT = 200
 
-# 全局缓存
+# 全局缓存：按 student_id 分槽，None 槽留给「不指定学生」的查询
 _prediction_cache = {
-    "last_result": None,
-    "last_record_count": 0,
-    "last_calculation_time": 0,
-    "detection_count_since_update": 0,
-    "lock": threading.Lock()
+    "lock": threading.Lock(),
+    "entries": {},  # type: Dict[Optional[str], Dict[str, Any]]
 }
+
+
+def _get_cache_entry(student_id: Optional[str]) -> dict:
+    """返回对应学生的缓存槽位（必须在 _prediction_cache["lock"] 内调用）"""
+    entries = _prediction_cache["entries"]
+    if student_id not in entries:
+        entries[student_id] = {
+            "last_result": None,
+            "last_record_count": 0,
+            "last_calculation_time": 0,
+        }
+    return entries[student_id]
 
 # 数据库依赖
 def get_db():
@@ -65,18 +76,22 @@ def get_db():
         db.close()
 
 
-def _get_detection_data_from_db(db, limit: int = 100) -> list:
+def _get_detection_data_from_db(db, limit: int = PREDICTION_HISTORY_LIMIT, student_id: Optional[str] = None) -> list:
     """
-    从数据库获取检测数据（替代全局变量）
+    从数据库获取检测数据。
 
     Args:
         db: 数据库会话
         limit: 最大记录数
+        student_id: 仅返回该学生的记录；None 表示不过滤（演示/聚合视图）
 
     Returns:
-        list: 检测数据列表
+        list: 检测数据列表，时间升序
     """
-    records = db.query(models.WeldingRecord).order_by(
+    query = db.query(models.WeldingRecord)
+    if student_id:
+        query = query.filter(models.WeldingRecord.student_id == student_id)
+    records = query.order_by(
         models.WeldingRecord.timestamp.desc()
     ).limit(limit).all()
 
@@ -165,70 +180,57 @@ class YOLODetectionData(BaseModel):
     batch_id: Optional[str] = None
 
 @router.get("/predict", response_model=PredictionResponse)
-async def get_prediction(db: Session = Depends(get_db)):
+async def get_prediction(
+    student_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
     """
-    获取焊缝质量预测数据和可视化图表
+    获取焊缝质量预测数据和可视化图表。
 
-    调用顺序：
-    1. 获取真实检测数据 - 使用前端上传视频后的检测结果
-    2. predict_future_scores() - 预测未来5次检测得分
-    3. 生成技能和缺陷统计 - 基于真实检测结果统计
+    Args:
+        student_id: 可选；仅基于该学生的历史记录做预测/统计。不传则使用全局数据（演示/聚合视图）。
 
-    Returns:
-        PredictionResponse: 包含历史数据、预测数据和统计信息
-
-    Note:
-        需要先上传视频进行检测，系统才有数据进行预测分析
-
-    缓存策略:
-        - 每10次新检测才重新计算预测
-        - 缓存有效期60秒
-        - 返回缓存数据时会在日志中标注
+    缓存按 student_id 分槽，避免不同学生看到串味的预测结果。
     """
     try:
         # ========== 缓存检查 ==========
-        current_record_count = db.query(models.WeldingRecord).count()
+        # 记录数也要按学生过滤，否则缓存阈值判断会跨学生联动
+        count_query = db.query(models.WeldingRecord)
+        if student_id:
+            count_query = count_query.filter(models.WeldingRecord.student_id == student_id)
+        current_record_count = count_query.count()
         current_time = time.time()
 
         with _prediction_cache["lock"]:
-            # 检查是否需要重新计算
+            cache_entry = _get_cache_entry(student_id)
+
             need_recalculate = False
             cache_reason = ""
 
-            # 1. 如果没有缓存结果，需要计算
-            if _prediction_cache["last_result"] is None:
+            if cache_entry["last_result"] is None:
                 need_recalculate = True
                 cache_reason = "无缓存"
 
-            # 2. 如果检测记录数变化超过阈值，需要重新计算
-            new_detections = current_record_count - _prediction_cache["last_record_count"]
+            new_detections = current_record_count - cache_entry["last_record_count"]
             if new_detections >= PREDICTION_CACHE_THRESHOLD:
                 need_recalculate = True
                 cache_reason = f"新增{new_detections}条记录超过阈值{PREDICTION_CACHE_THRESHOLD}"
 
-            # 3. 如果缓存过期，需要重新计算
-            if current_time - _prediction_cache["last_calculation_time"] > CACHE_TTL_SECONDS * 10:
+            if current_time - cache_entry["last_calculation_time"] > CACHE_TTL_SECONDS * 10:
                 need_recalculate = True
                 cache_reason = "缓存过期"
 
-            # 返回缓存结果（不满阈值时）
-            if not need_recalculate and _prediction_cache["last_result"]:
-                # 即使使用缓存，也要重新获取最新的检测数据来更新history
-                # 这样确保 history 数据点数量和 total_detections 一致
-                detection_data = _get_detection_data_from_db(db, limit=100)
+            if not need_recalculate and cache_entry["last_result"]:
+                # 即使命中缓存也刷新 history（保证图表点数与 total_detections 对得上）
+                detection_data = _get_detection_data_from_db(db, student_id=student_id)
 
                 if detection_data:
-                    recent_data = detection_data[-30:] if len(detection_data) > 30 else detection_data
-
-                    # 重新生成 history 数据（处理时间戳重复的情况）
                     new_history = {}
-                    for i, data_point in enumerate(recent_data):
+                    for data_point in detection_data:
                         timestamp = data_point.get('timestamp', datetime.now().isoformat())
-                        # 如果时间戳已存在，添加序号后缀避免覆盖
                         original_timestamp = timestamp
                         dup_counter = 1
                         while timestamp in new_history:
-                            # 在原始时间戳基础上添加递增的秒数
                             try:
                                 ts_dt = datetime.fromisoformat(original_timestamp) + timedelta(seconds=dup_counter)
                                 timestamp = ts_dt.isoformat()
@@ -238,33 +240,32 @@ async def get_prediction(db: Session = Depends(get_db)):
                         score = float(data_point.get('total_score', 85))
                         new_history[timestamp] = round(score, 2)
 
-                    cached_result = _prediction_cache["last_result"]
-
-                    # 创建新的响应对象（Pydantic模型不可变）
+                    cached_result = cache_entry["last_result"]
                     response = PredictionResponse(
                         history=new_history,
                         forecast=cached_result.forecast,
                         skill_stats=cached_result.skill_stats,
                         defect_stats=cached_result.defect_stats,
-                        total_detections=current_record_count
+                        total_detections=current_record_count,
                     )
-
-                    logger.info(f"使用缓存结果，已更新history为最新数据 ({len(new_history)}条记录, total_detections={current_record_count})")
+                    logger.info(
+                        f"使用缓存结果 (student={student_id or '-'}, history={len(new_history)} 点, "
+                        f"total_detections={current_record_count})"
+                    )
                     return response
 
-                # 如果无法获取数据，使用旧的缓存逻辑
-                cached_result = _prediction_cache["last_result"]
+                cached_result = cache_entry["last_result"]
                 response = PredictionResponse(
                     history=cached_result.history,
                     forecast=cached_result.forecast,
                     skill_stats=cached_result.skill_stats,
                     defect_stats=cached_result.defect_stats,
-                    total_detections=current_record_count
+                    total_detections=current_record_count,
                 )
-                logger.info(f"使用缓存结果 (无法获取最新数据)")
+                logger.info(f"使用缓存结果 (student={student_id or '-'}, 无法获取最新数据)")
                 return response
 
-        logger.info(f"开始执行预测流程... (原因: {cache_reason})")
+        logger.info(f"开始执行预测流程... (student={student_id or '-'}, 原因: {cache_reason})")
 
         # 动态导入模块（如果之前导入失败）
         import importlib
@@ -324,22 +325,18 @@ async def get_prediction(db: Session = Depends(get_db)):
         # 步骤1: 从数据库加载历史数据
         logger.info("步骤1: 从数据库加载历史数据...")
 
-        # 使用辅助函数从数据库获取数据（替代全局变量）
-        detection_data = _get_detection_data_from_db(db, limit=100)
+        detection_data = _get_detection_data_from_db(db, student_id=student_id)
 
-        # 如果数据库无数据，使用演示数据
         if not detection_data:
             logger.info("当前系统暂无检测数据，使用示例数据进行演示")
             detection_data = _generate_demo_data(days=15)
         else:
             logger.info(f"从数据库加载了 {len(detection_data)} 条历史记录")
 
-        # 将存储的列表数据转换为DataFrame格式
         import pandas as pd
-        # datetime 和 timedelta 已在文件顶部导入
 
-        # 使用最近30条数据进行预测（如果数据不足30条，则使用全部数据）
-        recent_data = detection_data[-30:] if len(detection_data) > 30 else detection_data
+        # 取所有可用数据进行预测和统计（已由 _get_detection_data_from_db 的 limit 兜底）
+        recent_data = detection_data
 
         data_rows = []
         for i, data_point in enumerate(recent_data):
@@ -367,8 +364,7 @@ async def get_prediction(db: Session = Depends(get_db)):
         import numpy as np
 
         if detection_data:
-            # 使用最近30条数据（或全部数据如果不足30条）计算技能统计
-            recent_data = detection_data[-30:] if len(detection_data) > 30 else detection_data
+            recent_data = detection_data
 
             smoothness_scores = [data.get('smoothness_score', data.get('total_score', 85)) for data in recent_data]
             width_scores = [data.get('width_score', data.get('total_score', 85)) for data in recent_data]
@@ -396,8 +392,7 @@ async def get_prediction(db: Session = Depends(get_db)):
         logger.info("步骤4: 生成缺陷统计数据...")
 
         if detection_data:
-            # 使用最近30条数据（或全部数据如果不足30条）统计缺陷类型
-            recent_data = detection_data[-30:] if len(detection_data) > 30 else detection_data
+            recent_data = detection_data
 
             # 初始化缺陷计数（使用统一的缺陷类型定义）
             defect_counts = {defect_type: 0 for defect_type in TRUE_DEFECT_TYPES}
@@ -448,11 +443,12 @@ async def get_prediction(db: Session = Depends(get_db)):
 
         # ========== 更新缓存 ==========
         with _prediction_cache["lock"]:
-            _prediction_cache["last_result"] = response
-            _prediction_cache["last_record_count"] = current_record_count
-            _prediction_cache["last_calculation_time"] = current_time
+            entry = _get_cache_entry(student_id)
+            entry["last_result"] = response
+            entry["last_record_count"] = current_record_count
+            entry["last_calculation_time"] = current_time
 
-        logger.info("预测流程执行完成，结果已缓存")
+        logger.info(f"预测流程执行完成，结果已缓存 (student={student_id or '-'})")
         return response
         
     except Exception as e:
@@ -677,20 +673,13 @@ async def health_check():
 
 
 @router.get("/predict/ai-analysis", response_model=AIAnalysisResponse)
-async def get_ai_prediction_analysis():
-    """
-    获取AI智能预测分析
-    基于历史数据使用AI进行深度分析和预测
-
-    Returns:
-        AIAnalysisResponse: AI分析结果
-    """
+async def get_ai_prediction_analysis(student_id: Optional[str] = None):
+    """获取 AI 智能预测分析。可选 student_id 过滤，避免不同学生看到同一份 AI 文本。"""
     try:
-        logger.info("开始AI预测分析...")
+        logger.info(f"开始AI预测分析... (student={student_id or '-'})")
 
-        # 使用辅助函数从数据库获取数据
         db = next(get_db())
-        detection_data = _get_detection_data_from_db(db, limit=100)
+        detection_data = _get_detection_data_from_db(db, student_id=student_id)
         if not detection_data:
             raise HTTPException(status_code=400, detail="当前系统暂无检测数据，请先上传视频进行检测后再进行AI分析")
 
