@@ -306,39 +306,67 @@ function ParticleTree({
         }
       }
       
-      // 每帧更新粒子颜色和大小，实现生长动画
+      // 每帧更新粒子颜色和大小
+      // 配色规则：
+      //   trunk（树根/主干/树枝）= 时间驱动的棕色骨架，始终展示（与数据无关）
+      //   leaf（树冠叶子）= 数据驱动；按 totalScore 分档 90+ 绿 / 70-89 黄 / <70 红，尺寸红>黄>绿
+      //   flower（leaf 池里 6% 预分配）= 有数据时显示粉色「花朵」
+      //   无数据的 leaf/flower 不显示（颜色 0 + size 收成 ~0）
       const currentGrowthTime = materialRef.current.uniforms.growthTime.value
       const trunkBase = new THREE.Color('#D2B48C')
       const trunkVariant = new THREE.Color('#DEB887')
-      const leafBase = new THREE.Color('#4ADE80')
-      const leafVariant = new THREE.Color('#A3E635')
       const flowerBase = new THREE.Color('#ffb7c5')
       const flowerVariant = new THREE.Color('#ff91a4')
+      const scoreHigh = new THREE.Color('#4ADE80')  // 绿
+      const scoreMid = new THREE.Color('#FACC15')   // 黄
+      const scoreLow = new THREE.Color('#EF4444')   // 红
+      const dimWhite = new THREE.Color('#ffffff')
       const tempColor = new THREE.Color()
-      
+
       for (let i = 0; i < INITIAL_PARTICLES.length; i++) {
-        const growthState = Math.max(0, Math.min(1, (currentGrowthTime - INITIAL_PARTICLES[i].growthOrder) / 1.0))
-        // 严格数据驱动：只有已被实际检测记录占用的槽位才点亮成树
-        const isLit = growthState > 0.1 && treeData.has(i)
-        let size = INITIAL_PARTICLES[i].baseSize
-        
-        if (isLit) {
-          if (INITIAL_PARTICLES[i].type === 'trunk') {
-            tempColor.copy(trunkBase).lerp(trunkVariant, INITIAL_PARTICLES[i].colorVariation)
-          } else if (INITIAL_PARTICLES[i].type === 'flower') {
-            tempColor.copy(flowerBase).lerp(flowerVariant, INITIAL_PARTICLES[i].colorVariation)
+        const particle = INITIAL_PARTICLES[i]
+        const growthState = Math.max(0, Math.min(1, (currentGrowthTime - particle.growthOrder) / 1.0))
+        let size = particle.baseSize
+
+        if (particle.type === 'trunk') {
+          // 树干类：时间驱动，与 treeData 无关
+          if (growthState > 0.1) {
+            tempColor.copy(trunkBase).lerp(trunkVariant, particle.colorVariation)
+            const growthFactor = Math.min(1.0, growthState * 1.5)
+            size *= (0.8 + growthFactor * 0.5)
           } else {
-            tempColor.copy(leafBase).lerp(leafVariant, INITIAL_PARTICLES[i].colorVariation)
+            tempColor.copy(dimWhite).multiplyScalar(0.15 * growthState)
+            size *= 0.5
           }
-          // 数据粒子放大，让稀疏数据点在 29k 暗骨架中突出
-          const growthFactor = Math.min(1.0, growthState * 1.5)
-          size *= (1.5 + growthFactor * 1.0)
-          if (i === selectedParticle) size *= 2.0
         } else {
-          tempColor.copy(new THREE.Color('#ffffff')).multiplyScalar(0.15 * growthState)
-          size *= 0.5
+          // leaf / flower：数据驱动
+          const data = treeData.get(i)
+          const hasData = data !== undefined && growthState > 0.1
+          if (hasData) {
+            if (particle.type === 'flower') {
+              tempColor.copy(flowerBase).lerp(flowerVariant, particle.colorVariation)
+              size *= 2.0
+            } else {
+              const score = data!.totalScore ?? data!.finalScore ?? 0
+              if (score >= 90) {
+                tempColor.copy(scoreHigh)
+                size *= 1.5
+              } else if (score >= 70) {
+                tempColor.copy(scoreMid)
+                size *= 2.5
+              } else {
+                tempColor.copy(scoreLow)
+                size *= 3.5
+              }
+            }
+            if (i === selectedParticle) size *= 2.0
+          } else {
+            // 无数据的 leaf/flower 隐去
+            tempColor.setRGB(0, 0, 0)
+            size *= 0.01
+          }
         }
-        
+
         colors[i * 3] = tempColor.r
         colors[i * 3 + 1] = tempColor.g
         colors[i * 3 + 2] = tempColor.b
