@@ -46,18 +46,16 @@ router = APIRouter()
 # 缓存配置
 PREDICTION_CACHE_THRESHOLD = 1  # 每1次检测就重新计算预测（实时更新）
 CACHE_TTL_SECONDS = 60  # 缓存有效期60秒
-# 历史数据展示上限：之前硬编码 [-30:] 把图表卡死在 30 点，现在放宽
 PREDICTION_HISTORY_LIMIT = 200
 
-# 全局缓存：按 student_id 分槽，None 槽留给「不指定学生」的查询
+# 按学生分槽缓存，None 槽对应不指定学生的查询
 _prediction_cache = {
     "lock": threading.Lock(),
-    "entries": {},  # type: Dict[Optional[str], Dict[str, Any]]
+    "entries": {},
 }
 
 
-def _get_cache_entry(student_id: Optional[str]) -> dict:
-    """返回对应学生的缓存槽位（必须在 _prediction_cache["lock"] 内调用）"""
+def _get_cache_entry(student_id):
     entries = _prediction_cache["entries"]
     if student_id not in entries:
         entries[student_id] = {
@@ -77,17 +75,7 @@ def get_db():
 
 
 def _get_detection_data_from_db(db, limit: int = PREDICTION_HISTORY_LIMIT, student_id: Optional[str] = None) -> list:
-    """
-    从数据库获取检测数据。
-
-    Args:
-        db: 数据库会话
-        limit: 最大记录数
-        student_id: 仅返回该学生的记录；None 表示不过滤（演示/聚合视图）
-
-    Returns:
-        list: 检测数据列表，时间升序
-    """
+    """从数据库获取检测数据，按时间升序返回。student_id 为 None 时不做过滤。"""
     query = db.query(models.WeldingRecord)
     if student_id:
         query = query.filter(models.WeldingRecord.student_id == student_id)
@@ -174,7 +162,6 @@ class YOLODetectionData(BaseModel):
     timestamp: Optional[str] = None
     actual_width: Optional[float] = None
     defect_type_name: Optional[str] = "无缺陷"
-    # 未登录时三项均为 None；DB 列已 nullable，孤立旧记录另由脚本回填
     student_id: Optional[str] = None
     student_name: Optional[str] = None
     batch_id: Optional[str] = None
@@ -184,17 +171,9 @@ async def get_prediction(
     student_id: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
-    """
-    获取焊缝质量预测数据和可视化图表。
-
-    Args:
-        student_id: 可选；仅基于该学生的历史记录做预测/统计。不传则使用全局数据（演示/聚合视图）。
-
-    缓存按 student_id 分槽，避免不同学生看到串味的预测结果。
-    """
+    """获取焊缝质量预测数据和可视化图表。可选 student_id 按学生过滤。"""
     try:
-        # ========== 缓存检查 ==========
-        # 记录数也要按学生过滤，否则缓存阈值判断会跨学生联动
+        # 计数也按学生过滤，否则缓存阈值会跨学生联动
         count_query = db.query(models.WeldingRecord)
         if student_id:
             count_query = count_query.filter(models.WeldingRecord.student_id == student_id)
@@ -221,7 +200,7 @@ async def get_prediction(
                 cache_reason = "缓存过期"
 
             if not need_recalculate and cache_entry["last_result"]:
-                # 即使命中缓存也刷新 history（保证图表点数与 total_detections 对得上）
+                # 命中缓存也刷一遍 history，让图表点数跟 total_detections 对得上
                 detection_data = _get_detection_data_from_db(db, student_id=student_id)
 
                 if detection_data:
@@ -335,7 +314,6 @@ async def get_prediction(
 
         import pandas as pd
 
-        # 取所有可用数据进行预测和统计（已由 _get_detection_data_from_db 的 limit 兜底）
         recent_data = detection_data
 
         data_rows = []
@@ -674,7 +652,7 @@ async def health_check():
 
 @router.get("/predict/ai-analysis", response_model=AIAnalysisResponse)
 async def get_ai_prediction_analysis(student_id: Optional[str] = None):
-    """获取 AI 智能预测分析。可选 student_id 过滤，避免不同学生看到同一份 AI 文本。"""
+    """获取 AI 智能预测分析。可选 student_id 按学生过滤。"""
     try:
         logger.info(f"开始AI预测分析... (student={student_id or '-'})")
 
@@ -946,86 +924,77 @@ class RadarDataResponse(BaseModel):
     data_source: str
 
 
-# 预设的模拟数据组（5分钟刷新一次，数据呈增长趋势）
-# 数据排列：夹渣最常见 > 气孔 > 其他差不多
-_MOCK_RADAR_DATA = [
-    # 初始数据
-    {
-        "defect_radar": {"夹渣": 45, "气孔": 35, "焊瘤": 25, "咬边": 22, "未熔合": 18, "裂纹": 12},
-        "skill_radar": {"光滑度": 72, "间距控制": 75, "缺陷控制": 70, "焊缝宽度": 68, "熔深控制": 72, "焊接速度": 74},
-        "ai_summary": "初始检测数据，夹渣问题较为常见，建议加强焊缝清洁"
-    },
-    # +5分钟后
-    {
-        "defect_radar": {"夹渣": 52, "气孔": 40, "焊瘤": 28, "咬边": 25, "未熔合": 20, "裂纹": 14},
-        "skill_radar": {"光滑度": 75, "间距控制": 77, "缺陷控制": 73, "焊缝宽度": 71, "熔深控制": 74, "焊接速度": 76},
-        "ai_summary": "数据持续积累中，夹渣问题仍需重点关注"
-    },
-    # +10分钟后
-    {
-        "defect_radar": {"夹渣": 58, "气孔": 48, "焊瘤": 32, "咬边": 28, "未熔合": 22, "裂纹": 16},
-        "skill_radar": {"光滑度": 78, "间距控制": 79, "缺陷控制": 76, "焊缝宽度": 74, "熔深控制": 76, "焊接速度": 78},
-        "ai_summary": "检测数据稳步增长，建议针对性改进焊接手法"
-    },
-    # +15分钟后
-    {
-        "defect_radar": {"夹渣": 65, "气孔": 55, "焊瘤": 36, "咬边": 32, "未熔合": 25, "裂纹": 18},
-        "skill_radar": {"光滑度": 81, "间距控制": 82, "缺陷控制": 79, "焊缝宽度": 77, "熔深控制": 79, "焊接速度": 80},
-        "ai_summary": "整体趋势良好，夹渣和气孔问题需要重点改进"
-    },
-    # +20分钟后
-    {
-        "defect_radar": {"夹渣": 72, "气孔": 62, "焊瘤": 40, "咬边": 35, "未熔合": 28, "裂纹": 20},
-        "skill_radar": {"光滑度": 84, "间距控制": 84, "缺陷控制": 82, "焊缝宽度": 80, "熔深控制": 81, "焊接速度": 83},
-        "ai_summary": "数据积累充分，焊接质量整体向好"
-    },
-    # +25分钟后
-    {
-        "defect_radar": {"夹渣": 78, "气孔": 68, "焊瘤": 44, "咬边": 38, "未熔合": 30, "裂纹": 22},
-        "skill_radar": {"光滑度": 87, "间距控制": 86, "缺陷控制": 85, "焊缝宽度": 83, "熔深控制": 83, "焊接速度": 85},
-        "ai_summary": "技能水平稳步提升，继续保持练习节奏"
-    },
-    # +30分钟后（最高）
-    {
-        "defect_radar": {"夹渣": 85, "气孔": 75, "焊瘤": 48, "咬边": 42, "未熔合": 33, "裂纹": 25},
-        "skill_radar": {"光滑度": 90, "间距控制": 88, "缺陷控制": 88, "焊缝宽度": 86, "熔深控制": 86, "焊接速度": 88},
-        "ai_summary": "检测周期完成，焊接技能显著提升，夹渣问题改善明显"
-    }
-]
+DEFECT_RADAR_AXES = ["夹渣", "气孔", "焊瘤", "咬边", "未熔合", "裂纹"]
 
-# 当前数据索引（用于5分钟递增刷新）
-_current_radar_index = 0
-_last_radar_update_time = 0
+
+def _aggregate_radar(records):
+    counts = {k: 0 for k in DEFECT_RADAR_AXES}
+    sums = {"smooth": 0.0, "width": 0.0, "defect": 0.0, "total": 0.0}
+    n = 0
+
+    for r in records:
+        if r.defect_type_name in counts:
+            counts[r.defect_type_name] += 1
+        if r.total_score is None:
+            continue
+        sums["smooth"] += r.smoothness_score or 0
+        sums["width"]  += r.spacing_score or 0
+        sums["defect"] += r.defect_type_score or 0
+        sums["total"]  += r.total_score or 0
+        n += 1
+
+    defect_total = sum(counts.values())
+    if defect_total:
+        defect_radar = {k: round(v / defect_total * 100, 1) for k, v in counts.items()}
+    else:
+        defect_radar = {k: 0.0 for k in DEFECT_RADAR_AXES}
+
+    if n == 0:
+        skill_radar = {k: 0 for k in ("光滑度", "间距控制", "缺陷控制", "焊缝宽度", "熔深控制", "焊接速度")}
+    else:
+        smooth = sums["smooth"] / n
+        width  = sums["width"]  / n
+        defect = sums["defect"] / n
+        total  = sums["total"]  / n
+        skill_radar = {
+            "光滑度":   round(smooth, 2),
+            "焊缝宽度": round(width, 2),
+            "缺陷控制": round(defect, 2),
+            "间距控制": round((smooth + width) / 2, 2),
+            "熔深控制": round(defect * 0.6 + smooth * 0.4, 2),
+            "焊接速度": round(total * 0.92, 2),
+        }
+    return defect_radar, counts, skill_radar, n
+
+
+def _summary_text(skill_radar, counts, n, scope):
+    if n == 0:
+        return f"{scope}尚无检测记录，开始检测后将自动生成数据画像"
+    weakest = min(skill_radar, key=skill_radar.get)
+    weak_line = f"最弱指标：{weakest}（{skill_radar[weakest]:.0f} 分）"
+    if sum(counts.values()) == 0:
+        return f"{scope}共 {n} 次检测，未观察到典型缺陷；当前{weak_line}"
+    top = max(counts, key=counts.get)
+    return f"{scope}共 {n} 次检测，{top}最频发（{counts[top]} 次）；{weak_line}"
 
 
 @router.get("/predict/ai-radar-data", response_model=RadarDataResponse)
-async def get_ai_radar_data(db: Session = Depends(get_db)):
-    """
-    获取雷达图数据（每5分钟递增刷新，数据呈增长趋势）
+async def get_ai_radar_data(
+    student_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    q = db.query(models.WeldingRecord)
+    if student_id:
+        q = q.filter(models.WeldingRecord.student_id == student_id)
+    records = q.order_by(models.WeldingRecord.timestamp.desc()).limit(PREDICTION_HISTORY_LIMIT).all()
 
-    刷新规则：
-    - 程序启动后每5分钟自动递增到下一组数据
-    - 数据呈缓慢增长趋势
-    - 到达最高点后循环回第一组
-    """
-    import time
-    global _current_radar_index, _last_radar_update_time
-
-    current_time = time.time()
-    REFRESH_INTERVAL = 300  # 5分钟 = 300秒
-
-    # 检查是否需要递增到下一组数据
-    if current_time - _last_radar_update_time >= REFRESH_INTERVAL:
-        _current_radar_index = (_current_radar_index + 1) % len(_MOCK_RADAR_DATA)
-        _last_radar_update_time = current_time
-
-    # 获取当前索引的数据
-    mock_data = _MOCK_RADAR_DATA[_current_radar_index]
+    defect_radar, counts, skill_radar, n = _aggregate_radar(records)
+    scope = f"学生 {student_id}" if student_id else "全班"
 
     return RadarDataResponse(
-        defect_radar=mock_data["defect_radar"],
-        skill_radar=mock_data["skill_radar"],
-        ai_summary=mock_data["ai_summary"],
+        defect_radar=defect_radar,
+        skill_radar=skill_radar,
+        ai_summary=_summary_text(skill_radar, counts, n, scope),
         analysis_time=datetime.now().isoformat(),
-        data_source="MOCK_DATA"
+        data_source="DATABASE" if n > 0 else "DATABASE_EMPTY",
     )

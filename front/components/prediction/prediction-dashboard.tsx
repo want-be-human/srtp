@@ -19,22 +19,22 @@ interface RadarData {
   defect_radar: Record<string, number>;
   skill_radar: Record<string, number>;
   ai_summary: string;
+  data_source?: string;
 }
 
-// 前端内置的示例数据（fallback）— 仅当后端没有返回真实数据时显示
-// TODO:replace-with-backend 真实聚合见 Phase C：删 /predict/ai-radar-data mock，改 DB 聚合
-const DEFAULT_MOCK_DEFECT_DATA = {
-  "夹渣": 68, "气孔": 52, "焊瘤": 35, "咬边": 32, "未熔合": 28, "裂纹": 18
+// 后端无数据时会带回 data_source=DATABASE_EMPTY，这里用全零兜底，
+// 顺便挂一个「暂无数据」角标。
+const EMPTY_DEFECT_DATA: Record<string, number> = {
+  "夹渣": 0, "气孔": 0, "焊瘤": 0, "咬边": 0, "未熔合": 0, "裂纹": 0,
+}
+const EMPTY_SKILL_DATA: Record<string, number> = {
+  "光滑度": 0, "间距控制": 0, "缺陷控制": 0, "焊缝宽度": 0, "熔深控制": 0, "焊接速度": 0,
 }
 
-const DEFAULT_MOCK_SKILL_DATA = {
-  "光滑度": 82, "间距控制": 78, "缺陷控制": 85, "焊缝宽度": 76, "熔深控制": 80, "焊接速度": 83
-}
-
-function MockBadge() {
+function EmptyBadge() {
   return (
-    <span className="absolute top-2 right-3 text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-300 border border-yellow-500/30">
-      示例数据
+    <span className="absolute top-2 right-3 text-[10px] px-1.5 py-0.5 rounded bg-slate-500/20 text-slate-300 border border-slate-500/30">
+      暂无数据
     </span>
   )
 }
@@ -122,8 +122,8 @@ function PredictionChart({ historyData, forecastData }: {
 
 // 缺陷雷达图组件
 function DefectRadar({ radarData }: { radarData: RadarData | null }) {
-  const isMock = !radarData?.defect_radar
-  const displayData = radarData?.defect_radar || DEFAULT_MOCK_DEFECT_DATA
+  const isEmpty = !radarData?.defect_radar || radarData.data_source === "DATABASE_EMPTY"
+  const displayData = radarData?.defect_radar || EMPTY_DEFECT_DATA
 
   const data = Object.entries(displayData).map(([type, value]) => ({
     subject: type,
@@ -133,7 +133,7 @@ function DefectRadar({ radarData }: { radarData: RadarData | null }) {
 
   return (
     <div className="w-full h-64 relative">
-      {isMock && <MockBadge />}
+      {isEmpty && <EmptyBadge />}
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart data={data}>
           <PolarGrid stroke="#374151" />
@@ -159,8 +159,8 @@ function DefectRadar({ radarData }: { radarData: RadarData | null }) {
 
 // 技能雷达图组件
 function SkillRadar({ radarData }: { radarData: RadarData | null }) {
-  const isMock = !radarData?.skill_radar
-  const displayData = radarData?.skill_radar || DEFAULT_MOCK_SKILL_DATA
+  const isEmpty = !radarData?.skill_radar || radarData.data_source === "DATABASE_EMPTY"
+  const displayData = radarData?.skill_radar || EMPTY_SKILL_DATA
 
   const data = Object.entries(displayData).map(([skill, value]) => ({
     subject: skill,
@@ -170,7 +170,7 @@ function SkillRadar({ radarData }: { radarData: RadarData | null }) {
 
   return (
     <div className="w-full h-64 relative">
-      {isMock && <MockBadge />}
+      {isEmpty && <EmptyBadge />}
       <ResponsiveContainer width="100%" height="100%">
         <RadarChart data={data}>
           <PolarGrid stroke="#374151" />
@@ -244,7 +244,7 @@ export function PredictionDashboardContent() {
   const [aiAnalysis, setAiAnalysis] = useState<any>(null)
   const [aiLoading, setAiLoading] = useState(false)
 
-  // 给 endpoint 拼上 student_id 过滤；localStorage 缓存 key 按学生分桶，避免切账号串味
+  // endpoint 和 localStorage 缓存都按学号分槽，免得切账号串味
   const studentId = currentUser?.student_id ?? null
   const studentQuery = studentId ? `?student_id=${encodeURIComponent(studentId)}` : ""
   const cacheKey = getPredictionCacheKey(studentId)
@@ -298,8 +298,7 @@ export function PredictionDashboardContent() {
               setAiAnalysis(aiData)
             }
 
-            // 雷达端点目前是 mock 数据（D2 才会接入真实统计），先不拼 student_id
-            const radarResponse = await fetch(API_ENDPOINTS.PREDICT_AI_RADAR)
+            const radarResponse = await fetch(`${API_ENDPOINTS.PREDICT_AI_RADAR}${studentQuery}`)
             if (radarResponse.ok) {
               const radarResult = await radarResponse.json()
               setRadarData(radarResult)

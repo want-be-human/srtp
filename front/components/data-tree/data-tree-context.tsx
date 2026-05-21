@@ -1,7 +1,7 @@
 "use client"
 
-// 数据树 Context：按登录学生隔离 + 持久化到 localStorage。
-// 切换账号时 selectedParticle 必须重置——否则旧索引可能落在新学生的空槽上。
+// 数据树状态按学号分槽存到 localStorage，切学号时把 selectedParticle 清掉，
+// 防止旧索引落到新学生的空槽上。
 
 import React, {
   createContext,
@@ -9,12 +9,13 @@ import React, {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react"
 import { useAuth } from "@/contexts/AuthContext"
+import { API_ENDPOINTS } from "@/lib/api"
 import { StorageKey, getJSON, setJSON } from "@/lib/storage"
+import { convertYOLOToTreeData } from "./data-adapter"
 
 export interface TreeData {
   id: string
@@ -27,8 +28,40 @@ export interface TreeData {
   finalScore: number
 }
 
-// 落盘形态：student_id → [particle_index, TreeData][]（Map 不能直接 JSON 序列化）
+// Map 不能直接 JSON 序列化，所以存成 [index, TreeData] 数组
 type StoredAll = Record<string, Array<[number, TreeData]>>
+
+interface RecentScoreRow {
+  total_score?: number
+  smoothness_score?: number
+  width_score?: number
+  spacing_score?: number
+  defect_score?: number
+  defect_type_score?: number
+  timestamp?: string
+  actual_width?: number | null
+  defect_type_name?: string | null
+}
+
+async function fetchTreeFromDb(studentId: string): Promise<Array<[number, TreeData]>> {
+  const url = `${API_ENDPOINTS.RECENT_SCORES}?student_id=${encodeURIComponent(studentId)}&limit=200`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data: { status: string; scores: RecentScoreRow[] } = await res.json()
+  if (data.status !== "success" || !data.scores?.length) return []
+  return data.scores.map((r, i) => [
+    i,
+    convertYOLOToTreeData({
+      total_score: r.total_score ?? 0,
+      smoothness_score: r.smoothness_score ?? 0,
+      width_score: r.width_score ?? r.spacing_score ?? 0,
+      defect_score: r.defect_score ?? r.defect_type_score ?? 0,
+      timestamp: r.timestamp ?? new Date().toISOString(),
+      actual_width: r.actual_width ?? undefined,
+      defect_type_name: r.defect_type_name ?? undefined,
+    }),
+  ])
+}
 
 interface DataTreeContextType {
   treeData: Map<number, TreeData>
@@ -40,26 +73,43 @@ interface DataTreeContextType {
 
 const DataTreeContext = createContext<DataTreeContextType | undefined>(undefined)
 
-// 与 data-tree-viewer 的 TOTAL_PARTICLES (7000 trunk + 22000 leaf) 对齐
+// 跟 data-tree-viewer 里 TOTAL_PARTICLES 对齐
 const MAX_PARTICLES = 29000
 
 export function DataTreeProvider({ children }: { children: ReactNode }) {
   const { currentUser, isHydrated } = useAuth()
   const [allStudents, setAllStudents] = useState<StoredAll>({})
   const [selectedParticle, setSelectedParticle] = useState<number | null>(null)
-  const loadedRef = useRef(false)
 
-  // 等 AuthContext hydrate 完再加载，避免 SSR 期间空读
   useEffect(() => {
     if (!isHydrated) return
     setAllStudents(getJSON<StoredAll>(StorageKey.DATA_TREE, {}))
-    loadedRef.current = true
   }, [isHydrated])
 
   const studentKey = currentUser?.student_id ?? null
   useEffect(() => {
     setSelectedParticle(null)
   }, [studentKey])
+
+  // 学生本地没有数据时从 DB 拉一次填进来，否则数据树空白
+  useEffect(() => {
+    if (!isHydrated || !studentKey) return
+    let cancelled = false
+    fetchTreeFromDb(studentKey)
+      .then((entries) => {
+        if (cancelled || entries.length === 0) return
+        setAllStudents((prev) => {
+          if ((prev[studentKey]?.length ?? 0) > 0) return prev
+          const next = { ...prev, [studentKey]: entries }
+          setJSON(StorageKey.DATA_TREE, next)
+          return next
+        })
+      })
+      .catch((err) => console.warn("[data-tree] DB 拉取历史失败", err))
+    return () => {
+      cancelled = true
+    }
+  }, [studentKey, isHydrated])
 
   const treeData = useMemo<Map<number, TreeData>>(() => {
     if (!studentKey) return new Map()
@@ -68,7 +118,7 @@ export function DataTreeProvider({ children }: { children: ReactNode }) {
 
   const addTreeData = useCallback(
     (data: TreeData) => {
-      if (!studentKey || !loadedRef.current) return
+      if (!studentKey || !isHydrated) return
       setAllStudents((prev) => {
         const slice = new Map(prev[studentKey] ?? [])
         let slot = -1
@@ -88,18 +138,18 @@ export function DataTreeProvider({ children }: { children: ReactNode }) {
         return next
       })
     },
-    [studentKey],
+    [studentKey, isHydrated],
   )
 
   const clearTreeData = useCallback(() => {
-    if (!studentKey || !loadedRef.current) return
+    if (!studentKey || !isHydrated) return
     setAllStudents((prev) => {
       const next = { ...prev, [studentKey]: [] }
       setJSON(StorageKey.DATA_TREE, next)
       return next
     })
     setSelectedParticle(null)
-  }, [studentKey])
+  }, [studentKey, isHydrated])
 
   const value = useMemo<DataTreeContextType>(
     () => ({
