@@ -57,7 +57,7 @@ class AIAnalysisService:
             return None
 
     async def _call_openai_api_async(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> Optional[str]:
-        """异步调用 OpenAI API：openai 客户端是 sync 实现，offload 到默认线程池避免阻塞 event loop。"""
+        """同步调用挪到线程池，别占住主循环"""
         return await asyncio.to_thread(self._call_openai_api, messages, max_tokens)
 
     async def analyze_latest_scores(self, scores: Dict[str, float]) -> Dict[str, Any]:

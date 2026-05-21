@@ -41,10 +41,8 @@ try:
     from .guanghuadu_jiance_qiqi import WeldingQualityScorer
     from .kuandu_jiance_qiqi import PreciseWeldDetector
 
-    # PyTorch >=2.6 把 torch.load 的 weights_only 默认改为 True。Ultralytics
-    # 8.0.x 的 best.pt 引用了 DetectionModel / dill._dill._load_type 等多个全局，
-    # 逐个加白名单不现实。这里直接 monkey-patch：项目中所有 torch.load 默认
-    # weights_only=False。.pt 来源是仓库内自带且受信任，可接受这一安全权衡。
+    # torch 2.6 把 weights_only 默认改成 True，加载 best.pt 会爆白名单错误。
+    # best.pt 来源可信，直接把 weights_only 默认改回 False。
     try:
         import torch
         if not getattr(torch.load, "_srtp_patched", False):

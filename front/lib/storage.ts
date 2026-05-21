@@ -1,6 +1,5 @@
-// 焊育智眸前端 localStorage 命名空间封装。
-// 统一 `srtp:` 前缀，避免和宿主页面、其它工具的 localStorage key 冲突。
-// SSR 安全：在服务端渲染期间，window 不存在时所有 get 返回 fallback、所有 set 静默丢弃。
+// localStorage 用 srtp: 前缀做命名空间。
+// SSR 期间 window 不存在，get 直接返回 fallback，set 静默忽略。
 
 const NS = "srtp:"
 
@@ -9,17 +8,13 @@ export const StorageKey = {
   AUTH_USER: `${NS}auth_user`,
   DATA_TREE: `${NS}data_tree`,
   PREDICTION_CACHE: `${NS}prediction_cache`,
-  // 后续 Phase D 用到的键统一在这里登记
-  // DEMO_SAFE_MODE: `${NS}demo_safe_mode`,
-  // TTS_MUTED: `${NS}tts_muted`,
 } as const
 
-/** 预测结果按学生切片缓存的 key。studentId 为空时回落到 guest 槽。 */
+/** 按学生分桶的预测缓存 key，没有学生时落到 guest 槽 */
 export function getPredictionCacheKey(studentId?: string | null): string {
   return `${StorageKey.PREDICTION_CACHE}:${studentId || "guest"}`
 }
 
-// JSON helper：方便存复杂对象。失败时静默返回 fallback。
 export function getJSON<T>(key: string, fallback: T): T {
   const raw = getString(key, "")
   if (!raw) return fallback
@@ -34,7 +29,7 @@ export function setJSON(key: string, value: unknown): void {
   try {
     setString(key, JSON.stringify(value))
   } catch {
-    // JSON 序列化失败（含循环引用等）：静默忽略
+    // 序列化失败，比如循环引用，忽略
   }
 }
 
@@ -57,7 +52,7 @@ export function setString(key: string, value: string): void {
   try {
     window.localStorage.setItem(key, value)
   } catch {
-    // 配额超限 / 隐私模式：静默忽略，调用方不应因此崩溃
+    // 容量满 / 隐私模式等
   }
 }
 

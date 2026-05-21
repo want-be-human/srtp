@@ -29,8 +29,7 @@ sys.path.insert(0, backend_dir)
 from database import SessionLocal
 import models
 
-# 演示阈值放在 backend/yolo_config.json，通过 config.YOLO_CONFIG_FILE 注入
-from config import YOLO_CONFIG_FILE
+from config import YOLO_CONFIG_FILE  # 配置文件路径，置信度阈值等
 
 # 导入统一的缺陷类型定义
 try:
@@ -436,16 +435,14 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
         # 创建数据库记录
         db_record = models.WeldingRecord(
             timestamp=timestamp,
-            # 学生标识
             student_id=data.student_id,
             student_name=data.student_name,
             batch_id=data.batch_id,
-            # 检测分数（夹取到 [0,100]，防御异常上游输入）
+            # 分数夹到 [0,100]
             smoothness_score=_clamp_score(data.smoothness_score),
-            spacing_score=_clamp_score(data.width_score),  # width_score 映射到 spacing_score
+            spacing_score=_clamp_score(data.width_score),
             defect_type_score=_clamp_score(data.defect_score),
             total_score=_clamp_score(data.total_score),
-            # 额外信息
             actual_width=data.width_mm,
             defect_type_name=data.defect_type_name,
             notes=data.notes
@@ -478,7 +475,7 @@ async def get_recent_scores(
     student_id: Optional[str] = None,
     db: SessionLocal = Depends(get_db),
 ):
-    """获取最近的检测分数记录（可选按 student_id 过滤，用于 PK 对比）"""
+    """获取最近的检测分数记录，可选按学号过滤。"""
     try:
         query = db.query(models.WeldingRecord)
         if student_id:

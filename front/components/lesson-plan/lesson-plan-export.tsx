@@ -108,8 +108,7 @@ function AutoScrollLessonPlan({ plans, interval = 5000 }: { plans: any[]; interv
   )
 }
 
-// 模拟教学建议 — 用于展示轮播。Phase C 将由后端规则库（services/rules/）提供真数据。
-// TODO:replace-with-backend
+// 教学建议轮播文案（暂时写死，后续接后端规则库）
 const MOCK_TEACHING_RECOMMENDATIONS = [
   "加强焊接基础知识学习，掌握焊接工艺原理和操作规范",
   "定期进行焊接技能考核，及时发现并改进不足之处",
@@ -123,8 +122,7 @@ const MOCK_TEACHING_RECOMMENDATIONS = [
   "加强焊接新技术新材料的学习研究",
 ]
 
-// 模拟下节课计划 — 用于展示轮播。Phase C 将由后端规则库根据当前数据生成。
-// TODO:replace-with-backend
+// 下节课计划（同上，等接后端规则库）
 const MOCK_LESSON_PLANS = [
   { 主题: "光滑度技能强化训练", 目标: "提升学生光滑度技能至90分以上", 重点难点: "焊缝表面成型质量控制，避免咬边和焊瘤", 教学方法: "演示教学+分组练习+现场指导" },
   { 主题: "缺陷识别与预防训练", 目标: "提升缺陷识别能力，降低缺陷率", 重点难点: "准确识别各类缺陷特征及成因分析", 教学方法: "案例教学+实物展示+小组讨论" },

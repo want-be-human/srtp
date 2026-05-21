@@ -56,8 +56,7 @@ interface RecentScoresResponse {
   scores: ScoreRecord[]
 }
 
-// 当前 DB 只有 3 维真实指标；其余 3 维（间距控制/熔深控制/焊接速度）由真实分数代理计算，
-// 等 D2/D4 改造后可替换为真测量。
+// DB 里只有 3 项真实分数，剩下 3 维（间距控制/熔深控制/焊接速度）用真实分数估算出来
 const RADAR_AXES = ["光滑度", "间距控制", "缺陷控制", "焊缝宽度", "熔深控制", "焊接速度"] as const
 
 function buildSixDimRadar(s: StudentStats | null): Record<(typeof RADAR_AXES)[number], number> {

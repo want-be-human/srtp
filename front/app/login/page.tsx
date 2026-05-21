@@ -1,10 +1,5 @@
 "use client"
 
-// 真实登录页（C1）
-//
-// 独立路由 /login，未登录用户被根路由的 gate 重定向到这里。
-// 表单：学号 + 密码 → AuthContext.login()。成功后回到根路由 /。
-
 import { useEffect, useState } from "react"
 import type { FormEvent } from "react"
 import { useRouter } from "next/navigation"
@@ -24,7 +19,6 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState("")
 
-  // 如果已经登录，没必要停留在登录页
   useEffect(() => {
     if (isHydrated && currentUser) {
       router.replace("/")

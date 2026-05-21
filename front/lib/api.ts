@@ -44,7 +44,7 @@ export const API_ENDPOINTS = {
   STUDENT_COMPARISON: `${API_BASE_URL}/api/v1/student-comparison`,
   BATCH_LIST: `${API_BASE_URL}/api/v1/batch-list`,
 
-  // 登录（C1）
+  // 登录
   AUTH_LOGIN: `${API_BASE_URL}/api/v1/auth/login`,
 };
 

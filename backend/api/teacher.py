@@ -21,7 +21,7 @@ _ai_client: Optional[OpenAI] = None
 
 
 def _get_ai_client() -> Optional[OpenAI]:
-    """惰性单例：避免每次请求重建 client、附带统一超时。"""
+    """懒加载 OpenAI client，第一次拿到就缓存住。"""
     global _ai_client
     if _ai_client is not None or not AI_API_KEY:
         return _ai_client
@@ -104,7 +104,7 @@ async def chat_with_teacher(payload: ChatInput):
     messages.append({"role": "user", "content": user_message})
 
     try:
-        # openai 客户端是 sync 实现，直接 await 会阻塞 event loop——offload 到线程池
+        # 同步调用挪到线程池，别占住主循环
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=AI_MODEL,

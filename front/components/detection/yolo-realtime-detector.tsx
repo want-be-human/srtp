@@ -10,8 +10,8 @@ import { useDataTree } from '@/components/data-tree/data-tree-context'
 import { convertYOLOToTreeData } from '@/components/data-tree/data-adapter'
 import { useAuth } from "@/contexts/AuthContext"
 
-// 摄像头来源优先级：localStorage(srtp:camera_url) → NEXT_PUBLIC_CAMERA_URL → 空字符串
-// 空字符串告诉后端 fallback 到 camera_id=0（本地 USB / 有线相机）
+// 优先用 localStorage 里手工配的地址，没有就退回 env，再没有给空字符串
+// （空字符串后端会用 camera_id=0 走本地相机）
 function resolveCameraUrl(): string {
   const fromStorage = getString(StorageKey.CAMERA_URL, "")
   if (fromStorage) return fromStorage
@@ -32,7 +32,7 @@ export interface YOLODetectionResult {
   detectedDefects?: string[]; // 检测到的缺陷列表
 }
 
-// 跨模块保活的检测态：activeModule switch 会卸载检测组件，这部分必须由父级持有
+// 切模块时检测组件会被卸载，下面这几项必须由父级保活
 export interface YOLOLiveState {
   isDetecting: boolean
   currentScores: YOLODetectionResult | null
@@ -61,7 +61,7 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
   const setVideoStreamUrl = (v: string) => setLiveState((s) => ({ ...s, videoStreamUrl: v }))
   const setUploadedImage = (v: string | null) => setLiveState((s) => ({ ...s, uploadedImage: v }))
 
-  // 本地态：error / isUploading / cameraUrl 是「重进就该重置」的瞬时状态
+  // 这几项重进就重置即可，不用保活
   const [error, setError] = useState<string>('')
   const [isUploading, setIsUploading] = useState(false)
   const [cameraUrl, setCameraUrl] = useState<string>('')
@@ -69,12 +69,10 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
   const { addTreeData } = useDataTree()
   const { currentUser } = useAuth()
 
-  // 客户端挂载后再读 localStorage / env，避免 SSR 水合不一致
   useEffect(() => {
     setCameraUrl(resolveCameraUrl())
   }, [])
 
-  // 打开 prompt 让用户改摄像头源；保存到 localStorage，空字符串时回退到 env / 后端默认相机
   const handleConfigureCamera = () => {
     const current = resolveCameraUrl()
     const next = window.prompt(
@@ -177,9 +175,7 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     }
   }
 
-  // 检测循环 - 定期获取检测数据
-  // 注意：组件因切换模块而 unmount 时，interval 被清；重新 mount 时若 isDetecting=true（父级保活），
-  // useEffect 会自动重新启动轮询。后端 /start-yolo 的线程不受前端 unmount 影响。
+  // 定期拉取后端的检测结果。切走模块时 interval 自动清掉，回来时再起一个。
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null
 
@@ -230,11 +226,10 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
       if (response.ok) {
         const result = await response.json()
 
-        // 清除该学生的前端预测缓存，确保折线图下次刷新时获取最新数据
+        // 把这个学生的预测缓存清掉，下一次刷新就能看到最新数据
         const ckey = getPredictionCacheKey(currentUser?.student_id)
         localStorage.removeItem(ckey)
         localStorage.removeItem(`${ckey}:time`)
-        console.log('已清除预测缓存，折线图将实时更新')
 
         // 2. 同时发送到数据树
         const treeData = convertYOLOToTreeData({
@@ -328,9 +323,8 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     setCurrentScores(null)
   }
 
-  // 组件 unmount 不再调用 stopYOLODetection——切到 AI 教师等模块时检测线程要保活。
-  // 副作用：tab 完全关闭后后端的 capture/inference 线程仍会运行（is_detecting 不会因前端断流复位），
-  // 需要用户主动点「停止」或调 /stop-yolo 才能停。后端 idle 自停留作后续改进。
+  // unmount 时不自动 stop，切走模块也要让检测继续跑。
+  // 代价是关 tab 后后端线程不会自停，得手动调 /stop-yolo。
 
   const getScoreColor = (score: number) => {
     if (score >= 90) return "from-green-500 to-emerald-500"

@@ -35,7 +35,7 @@ interface DetectionResult {
 export default function WeldingDetectionSystem() {
   const [activeModule, setActiveModule] = useState("dashboard")
   const [detectionResults, setDetectionResults] = useState<DetectionResult | null>(null)
-  // 检测态由父级持有，避免切模块时 detector 卸载丢失 isDetecting/分数/视频流 URL
+  // 检测态放在父级，免得切模块时 detector 卸载把状态带走
   const [yoloLive, setYoloLive] = useState<YOLOLiveState>(initialYOLOLiveState)
   const [yoloDataForTeacher, setYoloDataForTeacher] = useState<any>(null) // 存储要发送给AI教师的YOLO数据
   const [realTimeData, setRealTimeData] = useState({
@@ -46,14 +46,13 @@ export default function WeldingDetectionSystem() {
   const router = useRouter()
   const { currentUser, isHydrated, logout } = useAuth()
 
-  // 登录 gate：未登录用户跳到 /login
   useEffect(() => {
     if (isHydrated && !currentUser) {
       router.replace("/login")
     }
   }, [currentUser, isHydrated, router])
 
-  // 预加载 /login chunk，缩短登出跳转延迟（生产环境立即生效；dev 模式由 Next.js 按需编译，不会真正预热）
+  // 让登出跳转少等一会
   useEffect(() => {
     router.prefetch("/login")
   }, [router])
@@ -98,7 +97,7 @@ export default function WeldingDetectionSystem() {
     { id: "settings", label: "关于我们", icon: Settings },
   ]
 
-  // 处理YOLO数据发送到预测系统（detector 内部已发 POST，这里只是 hook 点）
+  // detector 内部已经发 POST 了，这里只是给个钩子方便调试
   const handleYOLODataSend = async (yoloData: any) => {
     console.log('发送YOLO数据到预测系统:', yoloData)
   }
@@ -176,7 +175,7 @@ export default function WeldingDetectionSystem() {
     }
   }
 
-  // 登录 gate：hydrate 前 & 跳转期间显示 loading，避免黑屏（dev 模式 /login chunk 冷编译会拖几百毫秒）
+  // 还没 hydrate 或正在跳登录页时，先显示加载态而不是黑屏
   if (!isHydrated || !currentUser) {
     return (
       <div

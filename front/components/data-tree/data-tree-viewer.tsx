@@ -209,8 +209,7 @@ const generateParticles = (): Particle[] => {
     })
   }
 
-  // 降序：index 0 = 最高 score = 树冠最显眼的叶子；
-  // 数据按 slot 0,1,2... 分配时，前几条记录落在视觉中心而非看不见的深根
+  // 按 score 降序，让前几条数据落到树冠最显眼的位置而不是埋在树根里
   pts.sort((a, b) => b.score - a.score)
   return pts
 }
@@ -231,7 +230,7 @@ function ParticleTree({
   const materialRef = useRef<THREE.ShaderMaterial>(null)
   const [growthStarted, setGrowthStarted] = useState(false)
   const ctx = useDataTree()
-  // PK 视图传入对比对象的 treeData；不传则走 Context（数据树主页面）
+  // 学生对比页会把另一个学生的 treeData 直接传进来；否则用当前学生的
   const treeData = treeDataOverride ?? ctx.treeData
   const selectedParticle = treeDataOverride ? null : ctx.selectedParticle
   const setSelectedParticle = treeDataOverride ? () => {} : ctx.setSelectedParticle
@@ -306,12 +305,8 @@ function ParticleTree({
         }
       }
       
-      // 每帧更新粒子颜色和大小
-      // 配色规则：
-      //   trunk（树根/主干/树枝）= 时间驱动的棕色骨架，始终展示（与数据无关）
-      //   leaf（树冠叶子）= 数据驱动；按 totalScore 分档 90+ 绿 / 70-89 黄 / <70 红，尺寸红>黄>绿
-      //   flower（leaf 池里 6% 预分配）= 有数据时显示粉色「花朵」
-      //   无数据的 leaf/flower 退化为暗白骨架，保留树冠的轮廓感
+      // 颜色和大小每帧重算。trunk 走时间动画固定棕色；leaf/flower 有数据
+      // 时按分数分档着色，没数据就退成暗白骨架。
       const currentGrowthTime = materialRef.current.uniforms.growthTime.value
       const trunkBase = new THREE.Color('#D2B48C')
       const trunkVariant = new THREE.Color('#DEB887')
@@ -329,7 +324,6 @@ function ParticleTree({
         let size = particle.baseSize
 
         if (particle.type === 'trunk') {
-          // 树干类：时间驱动，与 treeData 无关
           if (growthState > 0.1) {
             tempColor.copy(trunkBase).lerp(trunkVariant, particle.colorVariation).multiplyScalar(0.65)
             const growthFactor = Math.min(1.0, growthState * 1.5)
@@ -339,7 +333,6 @@ function ParticleTree({
             size *= 0.5
           }
         } else {
-          // leaf / flower：数据驱动
           const data = treeData.get(i)
           const hasData = data !== undefined && growthState > 0.1
           if (hasData) {
@@ -361,7 +354,7 @@ function ParticleTree({
             }
             if (i === selectedParticle) size *= 2.0
           } else {
-            // 无数据的 leaf/flower：暗白骨架，让树冠保留轮廓但不抢戏
+            // 没数据时退成暗白骨架
             tempColor.copy(dimWhite).multiplyScalar(0.30 * growthState)
             size *= 0.5
           }
@@ -582,7 +575,7 @@ export function DataTreeViewer({
 }: {
   theme?: 'dark' | 'light'
   resetGrowth?: boolean
-  /** PK 模式下显式传入另一个学生的 treeData；不传则用 Context 的当前学生切片 */
+  /** 学生对比页用，直接传另一个学生的 treeData */
   treeData?: Map<number, TreeData>
 }) {
   const cameraRef = useRef<any>(null)

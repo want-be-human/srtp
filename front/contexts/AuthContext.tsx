@@ -1,13 +1,7 @@
 "use client"
 
-// 登录身份 Context（C1）
-//
-// - currentUser 来自 localStorage `srtp:auth_user`；首次挂载时 hydrate，避免
-//   SSR 水合不一致。
-// - login(student_id, password) 异步调用 /api/v1/auth/login，成功才写入
-//   Context + localStorage；失败返回结构化错误信息供 UI 显示。
-// - logout() 清空 Context + localStorage，由调用方决定后续跳转。
-// - 没有 token / session：演示阶段不强制鉴权后端其它端点，前端 gate 是软的。
+// 登录态。currentUser 在客户端从 localStorage 恢复，isHydrated 用来卡住
+// SSR/首次渲染时的 gate 跳转。
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 import type { ReactNode } from "react"
@@ -24,7 +18,6 @@ export type LoginResult = { ok: true } | { ok: false; error: string }
 
 interface AuthContextValue {
   currentUser: CurrentUser | null
-  /** true 之后才能信任 currentUser 的值（避免 SSR 期间用空值 gate 跳转） */
   isHydrated: boolean
   login: (student_id: string, password: string) => Promise<LoginResult>
   logout: () => void
