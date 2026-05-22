@@ -10,6 +10,7 @@
 - YOLO模型路径
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -52,6 +53,21 @@ YOLO_IOU_THRESHOLD = float(os.environ.get("YOLO_IOU_THRESHOLD", 0.45))
 
 # 置信度、宽度阈值、各项打分权重等都在这个 json 里
 YOLO_CONFIG_FILE = str(BACKEND_DIR / "yolo_config.json")
+
+
+def _load_width_thresholds():
+    try:
+        with open(YOLO_CONFIG_FILE, encoding="utf-8") as f:
+            return json.load(f).get("width_thresholds", {}) or {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+_W = _load_width_thresholds()
+# 与 yolo_config.json::width_thresholds 同步，做下游统计（雷达图、报告）时复用
+OPTIMAL_WELD_WIDTH_MM = float(_W.get("optimal_width_mm", 5.5))
+MIN_WELD_WIDTH_MM = float(_W.get("min_width_mm", 3.0))
+MAX_WELD_WIDTH_MM = float(_W.get("max_width_mm", 8.0))
 
 # ============================================
 # CORS配置

@@ -11,6 +11,7 @@ import sys
 import os
 import threading
 import time
+from collections import deque
 from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -79,6 +80,138 @@ DEFAULT_WIDTH = 640
 DEFAULT_HEIGHT = 360
 # 推理目标频率（每秒几次YOLO）
 INFERENCE_FPS = 6
+
+# 检测时序融合参数
+# 5 帧滑动窗口；同类缺陷需要在窗口内被关联到 ≥3 次才算"确认"，瞬时单帧噪声丢掉
+STABILIZER_WINDOW = 5
+STABILIZER_CONFIRM = 3
+# 前后帧检测框 IoU 超过这个值才视为同一目标
+STABILIZER_IOU = 0.3
+# 一条 track 持续没匹配上多少帧就回收
+STABILIZER_TRACK_TTL = 5
+# 分数指数滑动平均权重：smoothed = ALPHA * new + (1 - ALPHA) * smoothed
+STABILIZER_EMA_ALPHA = 0.4
+
+
+def _box_iou(a, b):
+    """两个 [x1, y1, x2, y2] 框的 IoU，无重叠或退化框返回 0。"""
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+    ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+    ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+    iw, ih = max(0.0, ix2 - ix1), max(0.0, iy2 - iy1)
+    inter = iw * ih
+    if inter <= 0:
+        return 0.0
+    area_a = max(0.0, ax2 - ax1) * max(0.0, ay2 - ay1)
+    area_b = max(0.0, bx2 - bx1) * max(0.0, by2 - by1)
+    denom = area_a + area_b - inter
+    return inter / denom if denom > 0 else 0.0
+
+
+class DetectionStabilizer:
+    """跨帧关联 + 多帧确认 + 分数 EMA 平滑。
+
+    - 用 IoU 把当前帧的 detection 关联到已有 track；同类且 IoU 超阈值即认为是同一目标。
+    - 一条 track 在最近 STABILIZER_WINDOW 帧里出现 ≥ STABILIZER_CONFIRM 次才算"确认"，
+      前端拿到的就是稳定的检测，不再被单帧误检带飞。
+    - track 的输出 confidence 取窗口内中位数，对异常高/低值天然鲁棒。
+    - 四项分数走 EMA，前端折线不再跳。
+    """
+
+    def __init__(self):
+        self.frame_idx = 0
+        self.tracks = []
+        # None 表示尚未收过任何一帧
+        self.smoothed = None
+
+    def update(self, raw_detections, raw_scores):
+        """送入一帧的检测和分数，返回 (confirmed_detections, smoothed_scores)。"""
+        self.frame_idx += 1
+
+        parsed = []
+        for d in raw_detections or []:
+            box = d.get("box")
+            if not box or len(box) != 4:
+                continue
+            try:
+                parsed.append({
+                    "raw": d,
+                    "box": [float(x) for x in box],
+                    "cls": d.get("class_name", ""),
+                    "conf": float(d.get("confidence", 0.0)),
+                })
+            except (TypeError, ValueError):
+                continue
+
+        # 贪心 IoU 匹配：每条 track 找未占用的最佳 detection
+        matched = set()
+        for trk in self.tracks:
+            best_iou, best_j = STABILIZER_IOU, -1
+            for j, p in enumerate(parsed):
+                if j in matched or p["cls"] != trk["class"]:
+                    continue
+                iou = _box_iou(trk["box"], p["box"])
+                if iou >= best_iou:
+                    best_iou, best_j = iou, j
+            if best_j >= 0:
+                p = parsed[best_j]
+                matched.add(best_j)
+                trk["box"] = p["box"]
+                trk["last_seen"] = self.frame_idx
+                trk["frames"].append((self.frame_idx, p["conf"], p["box"], p["raw"]))
+
+        for j, p in enumerate(parsed):
+            if j in matched:
+                continue
+            new_trk = {
+                "class": p["cls"],
+                "box": p["box"],
+                "last_seen": self.frame_idx,
+                "frames": deque(maxlen=STABILIZER_WINDOW),
+            }
+            new_trk["frames"].append((self.frame_idx, p["conf"], p["box"], p["raw"]))
+            self.tracks.append(new_trk)
+
+        ttl_cut = self.frame_idx - STABILIZER_TRACK_TTL
+        self.tracks = [t for t in self.tracks if t["last_seen"] > ttl_cut]
+
+        # 多帧确认：窗口内累计 ≥ confirm 次的 track 才输出
+        confirmed = []
+        window_cut = self.frame_idx - STABILIZER_WINDOW + 1
+        for t in self.tracks:
+            recent = [f for f in t["frames"] if f[0] >= window_cut]
+            if len(recent) < STABILIZER_CONFIRM:
+                continue
+            confs = sorted(f[1] for f in recent)
+            median_conf = confs[len(confs) // 2]
+            latest_raw = recent[-1][3]
+            out = dict(latest_raw)
+            out["confidence"] = float(median_conf)
+            out["box"] = list(t["box"])
+            confirmed.append(out)
+
+        if self.smoothed is None:
+            self.smoothed = {}
+            for k, v in raw_scores.items():
+                try:
+                    self.smoothed[k] = float(v)
+                except (TypeError, ValueError):
+                    self.smoothed[k] = v
+        else:
+            a = STABILIZER_EMA_ALPHA
+            for k, v in raw_scores.items():
+                try:
+                    self.smoothed[k] = a * float(v) + (1 - a) * float(self.smoothed.get(k, v))
+                except (TypeError, ValueError):
+                    self.smoothed[k] = v
+
+        # state 保留全精度，对外只暴露两位小数避免前端长尾
+        out_scores = {
+            k: round(v, 2) if isinstance(v, (int, float)) else v
+            for k, v in self.smoothed.items()
+        }
+        return confirmed, out_scores
 
 
 class StartDetectionRequest(BaseModel):
@@ -203,6 +336,9 @@ def inference_loop():
             print("⚠ YOLO不可用（推理线程使用模拟数据）")
             detector = None
 
+        # 每个推理会话独立 stabilizer
+        stabilizer = DetectionStabilizer()
+
         # 推理频率控制
         interval = 1.0 / max(1, INFERENCE_FPS)
         next_t = time.perf_counter()
@@ -222,26 +358,34 @@ def inference_loop():
                         with detector_lock:
                             results = detector.process_frame(frame)
 
-                        detection_count = results.get("detection_count", 0)
-                        detections = results.get("detections", [])
-                        if detection_count == 0:
-                            defect_name = "无缺陷"
-                        else:
-                            # 优先使用中文名称，如果没有则将英文转换为中文
-                            defect_name = detections[0].get("class_name_cn", "未知") if detections else "未知"
-                            if defect_name == "未知":
-                                en_name = detections[0].get("class_name", "未知")
-                                defect_name = DEFECT_EN_TO_CN.get(en_name, en_name)
-
-                        detection_data = {
+                        raw_scores = {
                             "smoothness": results.get("smoothness_score", 0),
                             "width": results.get("width_score", 0),
                             "defect_type": results.get("defect_score", 0),
                             "total_score": results.get("total_score", 0),
+                        }
+                        raw_detections = results.get("detections", [])
+                        confirmed, smoothed_scores = stabilizer.update(raw_detections, raw_scores)
+
+                        detection_count = len(confirmed)
+                        if detection_count == 0:
+                            defect_name = "无缺陷"
+                        else:
+                            # 优先使用中文名称，如果没有则将英文转换为中文
+                            defect_name = confirmed[0].get("class_name_cn", "未知")
+                            if defect_name == "未知":
+                                en_name = confirmed[0].get("class_name", "未知")
+                                defect_name = DEFECT_EN_TO_CN.get(en_name, en_name)
+
+                        detection_data = {
+                            "smoothness": smoothed_scores.get("smoothness", 0),
+                            "width": smoothed_scores.get("width", 0),
+                            "defect_type": smoothed_scores.get("defect_type", 0),
+                            "total_score": smoothed_scores.get("total_score", 0),
                             "timestamp": time.time(),
                             "actual_width": results.get("width_mm", 0),
                             "defect_type_name": defect_name,
-                            "detected_defects": detections,
+                            "detected_defects": confirmed,
                             "top_y": results.get("top_y"),
                             "bottom_y": results.get("bottom_y"),
                             "detection_count": detection_count,

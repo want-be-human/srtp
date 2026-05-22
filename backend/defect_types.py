@@ -84,6 +84,17 @@ RADAR_DEFECT_TYPES = ['气孔', '夹渣', '未熔合', '焊瘤', '咬边', '裂�
 # 所有缺陷类型（中文）
 ALL_DEFECT_TYPES_CN = list(DEFECT_EN_TO_CN.values())
 
+# 这些 defect_type_name 值不算"实际缺陷"，统计时排除。
+# 包含 Good Weld 的中英文写法，以及 DB 历史里出现过的占位/缺省值。
+NON_DEFECT_LABELS = frozenset({
+    'Good Weld',
+    DEFECT_EN_TO_CN['Good Weld'],
+    '无缺陷',
+    '无',
+    '未知',
+    '',
+})
+
 
 def get_defect_name_cn(class_id: int) -> str:
     """根据类别ID获取中文名称"""

@@ -28,7 +28,7 @@ const EMPTY_DEFECT_DATA: Record<string, number> = {
   "夹渣": 0, "气孔": 0, "焊瘤": 0, "咬边": 0, "未熔合": 0, "裂纹": 0,
 }
 const EMPTY_SKILL_DATA: Record<string, number> = {
-  "光滑度": 0, "间距控制": 0, "缺陷控制": 0, "焊缝宽度": 0, "熔深控制": 0, "焊接速度": 0,
+  "光滑度均值": 0, "宽度准度": 0, "缺陷控制": 0, "宽度稳定性": 0, "进步速率": 0, "缺陷集中度": 0,
 }
 
 function EmptyBadge() {
@@ -389,11 +389,10 @@ export function PredictionDashboardContent() {
 
         {/* 技能雷达图 */}
         <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 backdrop-blur-sm">
-          <CardHeader className="flex flex-row items-center justify-between">
+          <CardHeader>
             <CardTitle className="text-white text-lg">
               技能水平评估
             </CardTitle>
-            <span className="text-xs text-gray-500">（待接入数字焊枪）</span>
           </CardHeader>
           <CardContent className="p-6">
             <SkillRadar radarData={radarData} />

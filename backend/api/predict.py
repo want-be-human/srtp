@@ -3,6 +3,7 @@ import logging
 import os
 import sys
 import json
+import statistics
 from typing import Dict, Any, Optional
 import time
 import threading
@@ -22,11 +23,14 @@ import models
 
 # 导入统一的缺陷类型定义
 try:
-    from defect_types import TRUE_DEFECT_TYPES, ALL_DEFECT_TYPES_CN, DEFECT_EN_TO_CN
+    from defect_types import TRUE_DEFECT_TYPES, ALL_DEFECT_TYPES_CN, DEFECT_EN_TO_CN, NON_DEFECT_LABELS
 except ImportError:
     # 备用定义
     TRUE_DEFECT_TYPES = ['焊接不良', '裂纹', '钢筋过剩', '气孔', '飞溅', '咬边', '焊瘤', '未熔合', '夹渣', '变形', '表面粗糙', '焊穿', '错边', '电弧擦伤', '变色', '工具痕迹']
     ALL_DEFECT_TYPES_CN = TRUE_DEFECT_TYPES + ['良好焊缝']
+    NON_DEFECT_LABELS = frozenset({'Good Weld', '良好焊缝', '无缺陷', '无', '未知', ''})
+
+from config import OPTIMAL_WELD_WIDTH_MM
 
 # 导入AI分析服务
 try:
@@ -925,24 +929,26 @@ class RadarDataResponse(BaseModel):
 
 
 DEFECT_RADAR_AXES = ["夹渣", "气孔", "焊瘤", "咬边", "未熔合", "裂纹"]
+SKILL_RADAR_AXES = (
+    "光滑度均值", "宽度准度", "缺陷控制",
+    "宽度稳定性", "进步速率", "缺陷集中度",
+)
+# 进步速率比对窗口：前 N 次 vs 后 N 次
+PROGRESS_WINDOW = 10
+# 缺陷集中度归一化分母（焊接训练里典型缺陷种类约 7 类）
+DISTINCT_DEFECT_DENOM = 7
 
 
 def _aggregate_radar(records):
-    counts = {k: 0 for k in DEFECT_RADAR_AXES}
-    sums = {"smooth": 0.0, "width": 0.0, "defect": 0.0, "total": 0.0}
-    n = 0
+    """把一批焊接记录算成两套雷达图维度，skill_radar 6 维全部基于实际可观测字段。"""
+    # 调用方按 timestamp.desc() 取记录，反转成时间升序便于"前 N 次 vs 后 N 次"对比
+    asc = list(reversed(records))
+    n = len(asc)
 
-    for r in records:
+    counts = {k: 0 for k in DEFECT_RADAR_AXES}
+    for r in asc:
         if r.defect_type_name in counts:
             counts[r.defect_type_name] += 1
-        if r.total_score is None:
-            continue
-        sums["smooth"] += r.smoothness_score or 0
-        sums["width"]  += r.spacing_score or 0
-        sums["defect"] += r.defect_type_score or 0
-        sums["total"]  += r.total_score or 0
-        n += 1
-
     defect_total = sum(counts.values())
     if defect_total:
         defect_radar = {k: round(v / defect_total * 100, 1) for k, v in counts.items()}
@@ -950,20 +956,57 @@ def _aggregate_radar(records):
         defect_radar = {k: 0.0 for k in DEFECT_RADAR_AXES}
 
     if n == 0:
-        skill_radar = {k: 0 for k in ("光滑度", "间距控制", "缺陷控制", "焊缝宽度", "熔深控制", "焊接速度")}
+        skill_radar = {k: 0 for k in SKILL_RADAR_AXES}
+        return defect_radar, counts, skill_radar, n
+
+    def _mean(values):
+        vs = [float(v) for v in values if v is not None]
+        return sum(vs) / len(vs) if vs else 0.0
+
+    def _clamp(v):
+        return max(0.0, min(100.0, v))
+
+    smooth_avg = _mean(r.smoothness_score for r in asc)
+    defect_avg = _mean(r.defect_type_score for r in asc)
+
+    width_devs = [abs(float(r.actual_width) - OPTIMAL_WELD_WIDTH_MM)
+                  for r in asc if r.actual_width is not None]
+    if width_devs:
+        width_accuracy = _clamp(100.0 - (sum(width_devs) / len(width_devs)) * 10.0)
     else:
-        smooth = sums["smooth"] / n
-        width  = sums["width"]  / n
-        defect = sums["defect"] / n
-        total  = sums["total"]  / n
-        skill_radar = {
-            "光滑度":   round(smooth, 2),
-            "焊缝宽度": round(width, 2),
-            "缺陷控制": round(defect, 2),
-            "间距控制": round((smooth + width) / 2, 2),
-            "熔深控制": round(defect * 0.6 + smooth * 0.4, 2),
-            "焊接速度": round(total * 0.92, 2),
-        }
+        width_accuracy = 0.0
+
+    spacing_scores = [float(r.spacing_score) for r in asc if r.spacing_score is not None]
+    if len(spacing_scores) >= 2:
+        width_stability = _clamp(100.0 - statistics.stdev(spacing_scores) * 2.0)
+    elif spacing_scores:
+        width_stability = 100.0
+    else:
+        width_stability = 0.0
+
+    if n >= 4:
+        head_n = min(PROGRESS_WINDOW, n // 2)
+        head_avg = _mean(r.total_score for r in asc[:head_n])
+        tail_avg = _mean(r.total_score for r in asc[-head_n:])
+        # 0 进步 = 50；提升 50 分 = 100；倒退 50 分 = 0
+        progress_rate = _clamp(50.0 + (tail_avg - head_avg))
+    else:
+        progress_rate = 50.0
+
+    distinct = len({
+        r.defect_type_name for r in asc
+        if r.defect_type_name and r.defect_type_name not in NON_DEFECT_LABELS
+    })
+    defect_focus = _clamp(100.0 - (distinct / DISTINCT_DEFECT_DENOM) * 100.0)
+
+    skill_radar = {
+        "光滑度均值": round(smooth_avg, 2),
+        "宽度准度":   round(width_accuracy, 2),
+        "缺陷控制":   round(defect_avg, 2),
+        "宽度稳定性": round(width_stability, 2),
+        "进步速率":   round(progress_rate, 2),
+        "缺陷集中度": round(defect_focus, 2),
+    }
     return defect_radar, counts, skill_radar, n
 
 

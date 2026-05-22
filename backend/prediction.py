@@ -9,78 +9,60 @@ warnings.filterwarnings('ignore')
 
 
 def predict_future_scores(data: pd.DataFrame, days: int = 5) -> Dict[str, Dict[str, float]]:
+    """用随机森林外推未来若干次检测的得分。
+
+    教学场景下数据按检测次数采样（一节课可能 20+ 次），所以唯一的"时间"特征
+    是 attempt_index 整数序号，配合 lag/MA 和三项子分数。返回的 history /
+    forecast 仍以时间戳字符串为键，line_chart 等下游沿用旧契约。
     """
-    使用随机森林回归预测未来几天的得分情况
-    
-    参数：
-    - data: DataFrame，包含历史数据，格式为[t, x, y, z, score]
-    - days: int，预测的天数，默认为5天
-    
-    返回：
-    - dict: 包含历史数据和预测数据的字典
-      {
-        "history": {t: score},   # 实际数据，t为时间戳字符串
-        "forecast": {t: score}   # 预测数据，t为时间戳字符串
-      }
-    """
-    
+
     # 验证输入数据
     if data.empty:
         raise ValueError("输入数据不能为空")
-    
+
     required_columns = ['t', 'x', 'y', 'z', 'score']
     if not all(col in data.columns for col in required_columns):
         raise ValueError(f"数据必须包含以下列: {required_columns}")
-    
+
     # 复制数据以避免修改原始数据
     df = data.copy()
-    
+
     # 确保时间列是datetime类型
     if not pd.api.types.is_datetime64_any_dtype(df['t']):
         df['t'] = pd.to_datetime(df['t'])
-    
-    # 按时间排序
+
+    # 按时间排序后，行号就是 attempt_index
     df = df.sort_values('t').reset_index(drop=True)
-    
-    # 创建特征工程
-    # 1. 时间特征
-    df['day_of_year'] = df['t'].dt.dayofyear
-    df['day_of_week'] = df['t'].dt.dayofweek
-    df['hour'] = df['t'].dt.hour
-    
-    # 2. 滞后特征（如果数据足够多）
+
+    # 数据足够多时，加滞后 + 3 点移动平均特征
     if len(df) >= 3:
         df['score_lag1'] = df['score'].shift(1)
         df['score_lag2'] = df['score'].shift(2)
         df['x_lag1'] = df['x'].shift(1)
         df['y_lag1'] = df['y'].shift(1)
         df['z_lag1'] = df['z'].shift(1)
-    
-    # 3. 移动平均特征
-    if len(df) >= 3:
         df['score_ma3'] = df['score'].rolling(window=3, min_periods=1).mean()
         df['x_ma3'] = df['x'].rolling(window=3, min_periods=1).mean()
         df['y_ma3'] = df['y'].rolling(window=3, min_periods=1).mean()
         df['z_ma3'] = df['z'].rolling(window=3, min_periods=1).mean()
-    
-    # 4. 趋势特征
-    df['time_index'] = range(len(df))
-    
-    # 准备特征
-    feature_columns = ['x', 'y', 'z', 'day_of_year', 'day_of_week', 'hour', 'time_index']
-    
+
+    # attempt_index：第几次检测，作为唯一的"时间"特征
+    df['attempt_index'] = range(len(df))
+
+    feature_columns = ['x', 'y', 'z', 'attempt_index']
+
     # 添加可用的滞后特征和移动平均特征
     if len(df) >= 3:
         feature_columns.extend(['score_lag1', 'score_lag2', 'x_lag1', 'y_lag1', 'z_lag1'])
         feature_columns.extend(['score_ma3', 'x_ma3', 'y_ma3', 'z_ma3'])
-    
+
     # 删除包含NaN的行（由于滞后特征产生）
     df_clean = df.dropna()
-    
+
     if len(df_clean) < 3:
-        # 如果清理后数据太少，使用简单特征
+        # 数据太少时只用最稳的几个特征
         df_clean = df.copy()
-        feature_columns = ['x', 'y', 'z', 'day_of_year', 'day_of_week', 'hour', 'time_index']
+        feature_columns = ['x', 'y', 'z', 'attempt_index']
     
     # 准备训练数据
     X = df_clean[feature_columns]
@@ -126,12 +108,9 @@ def predict_future_scores(data: pd.DataFrame, days: int = 5) -> Dict[str, Dict[s
     for i, future_time in enumerate(future_times):
         # 构建未来时间点的特征
         future_features = {}
-        
-        # 时间特征
-        future_features['day_of_year'] = future_time.dayofyear
-        future_features['day_of_week'] = future_time.dayofweek
-        future_features['hour'] = future_time.hour
-        future_features['time_index'] = len(df) + i
+
+        # 唯一时间维度：往后第几次检测
+        future_features['attempt_index'] = len(df) + i
         
         # 基于历史趋势预测x, y, z值
         # 使用简单的线性趋势外推
