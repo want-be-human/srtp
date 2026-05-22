@@ -1,9 +1,12 @@
-# 焊育智眸 国赛执行计划（2026-05-19 v3）
+# 焊育智眸 国赛执行计划（2026-05-22 v4）
 
-> v3 修正：v1/v2 把「我负责」错读为「用户亲自实现」，又把 P0/P1（除 3D）误塞给 Claude。  
-> **实际上用户是项目负责人，把 4 块任务交给 Claude，其余（P0/P1 除 3D）由团队其他成员负责。**
+> v4 修订：v3 列出的 D4/D5/D6（教学严格模式、TTS、标准对齐文案）和原 Phase E（缺陷热图独立项）全部废弃，
+> 替换为一组针对队友反馈 + 硬约束的检测/预测算法升级。
+> 触发原因：队友反馈 YOLO 全画面误检、轻量模型置信度抖、焊缝拟态逻辑差；
+> 同时确认两条硬约束：（1）检测方式只有单目 RGB 摄像头，无激光/X 光/声学/深度传感器；
+> （2）综合评分公式 `0.3·光滑 + 0.3·宽 + 0.4·缺陷` 是学校规定，权重不可改。
 
-冻结日：2026-05-28（国赛）。本文最后修订：2026-05-19。
+冻结日：2026-05-28（国赛）。本文最后修订：2026-05-22。
 
 ---
 
@@ -14,167 +17,214 @@
 | 决策、验收、对接需求 | 用户 |
 | 实物硬件（接线、调光、装相机） | 用户 |
 | 3D 重构展示（建模 + 资产） | 团队其他成员 |
-| **原规划 P0**（系统稳定性兜底，除 3D 外的硬件配置化、ROI、缺陷名兜底 sweep、PDF 本地规则化、AI 兜底巡查等） | **团队其他成员**（不是 Claude） |
-| **原规划 P1 除 3D 部分** | **团队其他成员**（不是 Claude） |
-| **有线摄像头接入（代码侧 + 联调）** | **Claude** |
-| **原规划 P2 = 演示登录 + 学生数据归属 + 数据树 PK + 学生对比页** | **Claude** |
-| **提案新增非 P2 部分 = TTS / 教学严格模式 / 演示降级模式 / mock 清理 / 演示数据预播种 / 标准对齐文案** | **Claude**（能在 P2 中顺带完成则顺带） |
-| 提案中的缺陷热图 | **Claude**，最后做 |
+| 原规划 P0/P1（除 3D 外） | 团队其他成员 |
+| 有线摄像头接入（代码侧 + 联调） | Claude |
+| 原规划 P2（演示登录 + 学生归属 + 数据树 PK + 学生对比页） | Claude |
+| Phase D 演示侧增强（D1-D3） | Claude（已完成） |
+| **Phase E 检测/预测算法升级（v4 新增）** | **Claude** |
 
-> Claude 不主动接 P0/P1 工作。如果在做自己范围内的代码时发现 P0/P1 的明显问题（例如某个端点必崩），告知用户、由用户分配，不擅自修。  
-> 已经在 simplify 阶段顺带做掉的 P0/P1 局部（`teacher.py` 单例 + timeout + fallback、`defect_name_safe()` 工具函数、`yolo_config.json` 接通、YOLO 加载链修复）属于历史既成事实，已推送、不回滚。后续不再继续 P0/P1 工作。
+> Claude 不主动接 P0/P1 工作。如果在做自己范围内的代码时发现 P0/P1 的明显问题，告知用户、由用户分配。
+> 之前 simplify 阶段顺带做掉的局部修复属于既成事实，已推送、不回滚。
 
 ---
 
 ## 2. 阶段排序
 
-### Phase A — 深度 /simplify（进行中）
+### Phase A — 深度 /simplify（已完成大部分）
 
 **已完成并双推**：
 
 | commit | 内容 |
 |---|---|
-| `a62332d` | 第一轮 simplify：teacher.py 单例 + timeout + fallback；defect_name_safe；score 夹取；删 mock；URL 统一 |
-| `08e796f / 87cafc9 / 1877d50 / 421cdab` | 文档：PROJECT_MEMORY / STRUCTURE_REPLAN / EXECUTION_PLAN（即 UPGRADE_PROPOSAL 改名） |
+| `a62332d` | teacher.py 单例 + timeout + fallback；defect_name_safe；score 夹取；删 mock；URL 统一 |
+| `08e796f / 87cafc9 / 1877d50 / 421cdab` | 文档：PROJECT_MEMORY / STRUCTURE_REPLAN / EXECUTION_PLAN |
 | `d8299f0` | Batch 1：删 pnpm 锁文件、雷达 mock 兜底加示例数据角标、lesson mock 瘦身 |
 | `1946aa5` | YOLO 加载链：torch.load monkey-patch + dill 依赖 |
 | `57ca65c` | yolo_config.json 真正接通到 IntegratedWeldDetector |
 
-**Phase A 还剩**（保留为后续 simplify 小批量）：
-
+**Phase A 还剩**（穿插完成即可）：
 - A5 `.gitignore` 补 `__pycache__/`、`*.pyc`、`welding.db`；`git rm --cached` 把这些从追踪里清掉
 - A6 后端测试脚本 `simple_test.py / test_api.py / test_types.py / check_db.py` 迁到 `backend/tests/` 并修 import
 
-A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完成。
+### Phase B — 有线摄像头接入（已完成）
 
-### Phase B — 有线摄像头接入（代码侧）
+- ✅ B1 摄像头来源配置化：`NEXT_PUBLIC_CAMERA_URL` + `srtp:camera_url` + 齿轮按钮、`storage.ts` 命名空间
 
-**只有一项**：
+### Phase C — 原规划 P2（已完成）
 
-- **B1 摄像头来源配置化**
-  - 删 `front/components/detection/yolo-realtime-detector.tsx:51` 的硬编码 `http://cc:12345@10.94.91.17:8080/`
-  - 新增 `NEXT_PUBLIC_CAMERA_URL` 环境变量 + `srtp:camera_url` localStorage 覆盖
-  - 加一个齿轮按钮，运行时切 URL；空值时不传 `camera_url`，后端 fallback 到 `camera_id=0`（本地 USB / 有线相机）
-  - 前端新建 `front/lib/storage.ts` 做 `srtp:` 前缀命名空间（顺带 D 阶段的 demo-safe-mode 也走它）
-  - 联调：等用户接上有线相机后告知，按上面的 UI 切一遍走通完整流程
+- ✅ C1 学号+密码登录（bcrypt、`/login` 路由、AuthContext）
+- ✅ C2 学生数据归属（save_score 接通 AuthContext）
+- ✅ C3 数据树用户隔离（按 student_id 过滤 + localStorage 持久化）
+- ✅ C4 学生对比页 / PK 视图（含双数据树并排）
+- ✅ C5 检测态跨模块保活（state 上提到 WeldingDetectionSystem）
+- ✅ C5.1 后端 AI 调用异步化（`await asyncio.to_thread`）
+- ✅ C6 预测端点按学生过滤 + 取消 30 条上限
 
-### Phase C — 原规划 P2（登录 + 归属 + PK + 对比）
+### Phase D — 演示侧增强（D1-D3 已完成；D4/D5/D6 v4 废弃）
 
-依赖 B1 完成（演示链路稳了再加身份层），按依赖顺序：
+**已完成**：
+- ✅ D1 演示降级模式（`srtp:demo_safe_mode` + 本地视频/缓存数据）
+- ✅ D2 删 `/predict/ai-radar-data` mock，改为 DB 真实聚合
+- ✅ D3 演示数据预播种（`seed_demo_data.py`：6 个学生 × 18-25 条历史、不同短板画像）
 
-- **C1 学号 + 密码登录**（真实场景，非 demo 账号选择器）
-  - 数据库：新增 `students` 表（`student_id` 唯一、`password_hash` bcrypt、`batch_id`、`created_at`）
-  - 后端：`backend/api/auth.py` 暴露 `POST /api/v1/auth/login`（学号+密码，bcrypt 校验，错误统一「学号或密码错误」）
-  - 预播种脚本：`backend/scripts/seed_students.py` 写入班级名单，初始密码统一 `123456`；学校官网接入后改写本脚本即可
-  - 前端：独立 `/login` 路由（`front/app/login/page.tsx`），表单 = 学号 + 密码；`front/contexts/AuthContext.tsx` 暴露 `login()` / `logout()` / `currentUser`
-  - 路由 gate：根路由 `/`（`front/app/page.tsx`）未登录时 `router.replace("/login")`；登录后顶部右上角显示学号、姓名、班级与登出按钮
-  - 不在侧边栏放「登录」入口（登录是 gate，不是模块）
-  - 没有 token / session / 强制鉴权后端其它端点：演示阶段够用，后续要真鉴权再补 JWT，不破坏接口契约
+**已废弃（v4 删除）**：
+- ~~D4 教学/严格模式切换~~ — 涉及综合评分权重，与学校规定冲突，撤掉
+- ~~D5 TTS 重要事件播报~~ — 不属于算法层面创新，国赛 7 天内优先把精力放算法升级
+- ~~D6 标准对齐文案~~ — 由用户自行在 PDF/讲稿中加，不需要代码改动
 
-- **C2 学生数据归属**
-  - 前端 save_score 调用链统一从 AuthContext 取 `student_id / student_name`
-  - `WeldingRecord` 表字段 `student_id / student_name / batch_id` 已经存在且 nullable，**无需迁移**
-  - 旧记录的 `student_id IS NULL` 问题留给 D3 脚本批量改为 `student_demo`
-  - 验证：保存后能从 `/student-comparison` 看到分组
+### Phase E — 检测/预测算法升级（v4 新增，替代旧 D4-D6 + 旧 Phase E）
 
-- **C3 数据树用户隔离**
-  - `DataTreeContext` 加按 `student_id` 过滤
-  - 持久化数据树到 localStorage（解决之前内存丢失问题）
-  - 切换账号时清空 / 重加载该学生历史
+**触发**：队友反馈检测模块三大痛点 + 两条硬约束（单目 RGB / 固定权重）。
+**通则**：综合评分公式 `0.3·光滑 + 0.3·宽 + 0.4·缺陷` 不动；只改单项分数的"内部计算公式"、检测推理侧、雷达图维度定义、预测算法。
 
-- **C4 学生对比页 / PK 视图**
-  - 左侧导航新建「学生对比 / PK」
-  - 调 `/student-comparison` + `/batch-list`，同屏对比平均分、技能雷达、检测次数、最近趋势
-  - 加分项：双数据树并排渲染
+#### P0 — 必修，预计 1.5 天（修语义 bug + 立刻消除"分数抖"投诉）
 
-- **C5 检测态跨模块保活**（C3 复核期暴露的预存在 bug）
-  - 现象：`焊缝检测` → 点「咨询 AI 教师」（`setActiveModule("teacher")`）→ 切回 `焊缝检测` 时 `currentScores / videoStreamUrl / isDetecting` 全部归零，无法继续「发送到预测系统」
-  - 根因：`front/app/page.tsx` `renderMainContent()` 用 switch 渲染，切换 `activeModule` 时上一个模块整体卸载，`YOLORealtimeDetector` 的本地 React state 跟着丢
-  - 修法（首选）：把 `currentScores / isDetecting / videoStreamUrl / uploadedImage` 上提到 `WeldingDetectionSystem`（C5 复核期发现 uploadedImage 也要带上），作为 `liveState` 单一 props 下传给 detector
-  - 顺带：移除 detector 的 unmount 自动 stopYOLODetection——切走时检测线程要保活
-  - 副作用：tab 关掉后端 capture/inference 线程不会自停，需要用户手动停或调 /stop-yolo（idle 自停留作 D 阶段改进）
+- **E-P0-1 时序融合 + EMA + IoU 跟踪**（替代 v3 中"立刻改善置信度"诉求）
+  - 文件：`backend/api/yolo_realtime.py::inference_loop`
+  - 维护近 5 帧 detections 滑动窗口，**同类缺陷在窗口内 ≥ 3 次才算"确认缺陷"**，瞬时单帧噪声丢弃
+  - 总分 EMA 平滑：`smoothed = 0.4·new + 0.6·smoothed`，前端折线不再跳
+  - 前后帧检测框 IoU > 0.3 关联为一个 track，按 track 维度取 confidence 中位数
+  - 依据：[Lightweight Multi-Frame Integration arxiv 2506.20550](https://arxiv.org/html/2506.20550v1)、[MR2-ByteTrack arxiv 2404.11488](https://arxiv.org/pdf/2404.11488)
 
-- **C5.1 后端 AI 调用异步化**（C5 复核期发现）
-  - 现象：触发智能预测的 AI 分析（`/predict/ai-analysis`）会阻塞 30+ 秒，期间所有其他端点（`/student-comparison` / `/quick-stats`）排队不响应；演示中切到学生对比页面会出现下拉空、雷达卡住
-  - 根因：`ai_analysis.py` 的 `async def analyze_*` 内部直接调用 sync `_call_openai_api`（3 处），openai 客户端的同步 HTTP 阻塞 FastAPI 的 event loop；`api/teacher.py::chat_with_teacher` 同模式
-  - 修法：`ai_analysis.py` 3 处改用 `await _call_openai_api_async`（项目已经实现了这个 async 版本但没人用）；`teacher.py` 用 `await asyncio.to_thread(client.chat.completions.create, ...)` offload 到线程池
-  - 影响：演示期任何 AI 调用都不会再卡其他模块
+- **E-P0-2 修预测时间轴语义（time → attempt_index）**
+  - 文件：`backend/prediction.py::predict_future_scores`、`backend/api/predict.py::get_prediction`
+  - 现状把 `day_of_year/hour` 当特征、按"天"外推 5 天，但实际数据是按"检测次数"采样的（一节课能采 20+ 次）
+  - 改成把 `t` 换成 `attempt_index` 整数序号，外推时直接 `last_index + 1..5`
+  - 前端折线 X 轴标签换成"第 N 次检测"
+  - 文件：[front/components/prediction/prediction-dashboard.tsx](front/components/prediction/prediction-dashboard.tsx)
 
-- **C6 预测端点按学生过滤 + 取消 30 条上限**（C3 复核期发现）
-  - 现象：登录不同学生看到的预测/技能雷达完全一样；折线图永远只有最近 30 条
-  - 根因 1：`backend/api/predict.py::get_prediction` 不接受 `student_id` 参数，`_get_detection_data_from_db` 也不过滤；C2 把 `student_id` 入库了但消费端没接通
-  - 根因 2：[predict.py:221](backend/api/predict.py) 硬编码 `recent_data = detection_data[-30:]`
-  - 修法：
-    - `/predict` 加可选 query 参数 `student_id`；`_get_detection_data_from_db` 多一个 `student_id` 过滤条件
-    - 前端预测面板 fetch 时从 `AuthContext.currentUser.student_id` 取并拼到 URL
-    - 删 `[-30:]` 切片，改用一个稍大的上限常量（如 200）做防御性截断
-    - 预测缓存 key 要加 `student_id` 维度，否则缓存命中会跨学生串味
-  - 验证：A 学生存 10 条都是 70-80 分的数据，B 学生存 10 条都是 90+ 的数据；切换登录应能看到不同的折线、雷达、forecast
+- **E-P0-3 雷达 6 维洗白**（去派生公式）
+  - 文件：`backend/api/predict.py::_aggregate_radar`
+  - 现状 6 维中 3 维是 `(smooth+width)/2`、`defect·0.6+smooth·0.4`、`total·0.92` 这种凑数公式，评审一眼看出
+  - 改成 6 维真实可观测：
+    | 维度 | 计算方式 |
+    |---|---|
+    | 光滑度均值 | `avg(smoothness_score)` |
+    | 宽度准度 | `100 - avg(|actual_width - 6.0|) * 10` |
+    | 缺陷控制 | `avg(defect_type_score)` |
+    | 宽度稳定性 | `100 - std(spacing_score) * 2`，钳到 [0,100] |
+    | 进步速率 | `avg(后 10 次) - avg(前 10 次)` 归一化 |
+    | 缺陷集中度 | `100 - (distinct_defect_types / 7) * 100` |
+  - 注意：这是雷达图，不是综合评分权重，不冲突学校规定
 
-### Phase D — 提案新增项（Phase B/C 之外）
+#### P1 — 主创新，预计 3 天（解决队友三大投诉）
 
-按优先级：
+- **E-P1-1 焊缝 ROI 引导（HSV 高光抑制 + 形态学带状 + 动态 ROI）** ⭐ 主创新点 1
+  - 文件：新建 `backend/services/yolo/weld_roi.py`，`zonghe_hanjie_zhiliang_jiance_xitong.py::detect_defects` 调用
+  - 三段式：
+    1. HSV 高光抑制：V 通道 `clip(V, V_thresh)`，把过曝白斑压回中亮度，消除"焊渣反光被当成焊缝"的拟态根因
+    2. 形态学带状提取：Otsu 二值化 → 闭运算（kernel 21×3 长条）→ 最大连通域 → PCA 算主方向 θ
+    3. 动态 ROI：上一帧 ROI 膨胀 15 像素作为本帧 search region，第一帧用全图
+  - YOLO 推理：ROI 外像素乘 0.3 衰减（不置黑，避免人为强边缘），检测后丢弃中心点落在 ROI 外的框
+  - 副产物：焊缝主方向 θ 可作为"焊接走向稳定性"指标
+  - 依据：[Dynamic ROI Seam Extraction MDPI Sensors 2025 PMC12157130](https://pmc.ncbi.nlm.nih.gov/articles/PMC12157130/)、[Passive Vision Weld ROI MDPI Sensors PMC12736899](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12736899/)、[Specular Highlight Removal MDPI Mathematics 2024](https://www.mdpi.com/2227-7390/12/16/2578)
 
-- **D1 演示降级模式**（最重要的现场安全网）
-  - 新建 `front/public/demo/weld.mp4`（占位或现有焊缝图序列）、`front/public/demo/cached_result.json`
-  - 设置模块加开关：开启后摄像头流改读本地文件、YOLO 数据改读 cached_result.json
-  - localStorage 键 `srtp:demo_safe_mode`
+- **E-P1-2 宽度检测复用 ROI + 拟态过滤** ⭐ 解决"焊缝拟态" bug
+  - 文件：`backend/services/yolo/kuandu_jiance_qiqi.py::PreciseWeldDetector`
+  - 现状 `enhanced_weld_detection` 只在全图中心 1/3 找最亮行 + 5% 银白色扩边，焊渣反光带就会被当成焊缝
+  - 改为：
+    1. 走 E-P1-1 同一个 ROI mask，宽度只在 ROI 内找
+    2. 候选行加"连续性验证"：检测行两侧 ±20 像素必须有连续的暗-亮-暗梯度（焊缝两侧应该是基板），过滤孤立亮斑
 
-- **D2 删 `/predict/ai-radar-data` mock**
-  - 后端：删 `_MOCK_RADAR_DATA` 7 套轮换，改为从 DB 按缺陷类型计数 + 技能维度求平均
-  - 前端：拿到真数据时不再显示「示例数据」角标
+- **E-P1-3 单目宽度的「参考物一次性标定」** ⭐ 解决"15cm 写死"硬伤
+  - 文件：新建 `backend/api/calibration.py`、新建 `front/components/settings/camera-calibration.tsx`、`backend/models.py` 加 `CameraCalibration` 表
+  - 现状 `image_height_cm=15.0` 硬编码在 `PreciseWeldDetector` 构造函数，`pixels_per_cm = height / 15.0` 等于完全没标定，宽度 mm 值是"假装的 mm"
+  - 流程：
+    1. 设置页加"摄像头标定"按钮，要求拍一张含已知长度参考物（标定卡 / 钢直尺）的图
+    2. 前端 canvas 上点击参考物两端、输入真实长度（如 50mm）
+    3. 后端算 `pixels_per_mm = pixel_distance / real_distance`，存到 SQLite `camera_calibration(camera_id, pixels_per_mm, calibrated_at)`
+    4. `PreciseWeldDetector` 启动时优先读 DB 标定值，未标定走旧 fallback + 前端提示"未标定，宽度为估算值"
+  - 评审会问的硬伤，必修
+  - 依据：[Measuring Planar Objects with Calibrated Camera (MathWorks)](https://www.mathworks.com/help/vision/ug/measuring-planar-objects-with-a-calibrated-camera.html)、[NIST IR 7197 Camera Calibration](https://nvlpubs.nist.gov/nistpubs/Legacy/IR/nistir7197.pdf)、[GMAW Real-Time Weld Bead Width PMC5038773](https://pmc.ncbi.nlm.nih.gov/articles/PMC5038773/)
 
-- **D3 演示数据预播种**
-  - 新建 `backend/scripts/seed_demo_data.py`：3-4 个学生 × 各 15-30 条历史检测，分数曲线合理（有上升 + 波动），不同学生有不同短板（A 偏宽度差、B 偏缺陷多）
-  - 顺带：脚本里加一条 `UPDATE welding_records SET student_id='student_demo' WHERE student_id IS NULL`，把 C2 上线前的孤立旧记录归到 `student_demo`，避免 PK / 对比页出现「未指定学生」分组
+#### P2 — 增强，预计 2.5 天
 
-- **D4 教学/严格模式切换**
-  - 后端 detection runtime 暴露 confidence 可写状态（GET/POST `/api/v1/runtime/confidence`）
-  - 前端设置面板加二档开关：教学 0.3 / 严格 0.6
+- **E-P2-1 1D-CNN 时序预测**（创新点 2）
+  - 文件：新建 `backend/services/prediction/temporal_model.py`、`backend/prediction.py` 增加 `predict_with_temporal_model`
+  - 在 RandomForest 之外加 1D-CNN：3 个 conv1d + 1 个 fc，参数 < 50KB，输入近 30 次 `[smooth, width, defect]` 序列，输出未来 5 次
+  - 训练数据：`seed_demo_data` 已有的 130 条 + 真实采集（启动脚本里增量训练）
+  - 前端 toggle"快速预测 / 深度预测"切换两条曲线
+  - 为什么不用 LSTM：教学场景 PC CPU 推理优先，1D-CNN 比 LSTM 快 3-5×，短序列效果几乎相同
+  - 依据：[Period-Sensitive LSTM IEEE 2024](https://ieeexplore.ieee.org/document/10716249/)
 
-- **D5 TTS 重要事件播报**
-  - 新建 `front/lib/tts.ts`（speechSynthesis 封装 + 静音开关 + 显式 voice 选择）
-  - DetectionModule 在 3 类事件触发播报：`总分 < 60` / `严重缺陷出现` / `保存成功`
-  - 设置面板加全局静音开关；首次触发时给浏览器策略提示
-  - 离线兜底：录 1-2 段关键 MP3 放 `front/public/demo/voice/`
+- **E-P2-2 光滑度 GLCM 纹理 + 高光抑制** ⭐ 修过曝白板满分 bug
+  - 文件：`backend/services/yolo/guanghuadu_jiance_qiqi.py::WeldingQualityScorer`
+  - 现状只看 white/gray/black 比例，过曝白板直接 90+
+  - 改为：
+    1. 先做 HSV 高光抑制（复用 E-P1-1）
+    2. 在抑制后灰度图上算 GLCM 对比度 + 局部 5×5 方差
+    3. `score = 0.4·brightness + 0.4·(1 - normalized_GLCM_contrast) + 0.2·(1 - normalized_variance)`
+  - 只改"光滑度子分数"算出方式，最外层 0.3 综合权重不动
 
-- **D6 标准对齐文案**
-  - PDF 报告页脚加「评分参考 GB/T 19418-2003 缺陷分级」
-  - 新建 `docs/讲稿大纲.md`：把 GB/T 19418、GB/T 32259、1+X 三项叙事写进去
-  - 不进 README（决策 #5）
+- **E-P2-3 TTA 仅在按键保存时启用**
+  - 文件：`backend/api/yolo_realtime.py::save_score`、`backend/services/yolo/zonghe_hanjie_zhiliang_jiance_xitong.py` 加 `detect_defects_with_tta`
+  - 实时流保持单次推理 6 FPS；用户按键保存时对当前帧做 3 路 TTA（原图 + 水平翻转 + 多尺度 0.83/1.0/1.2），NMS 合并
+  - 入库分数比实时显示分数更稳
+  - 依据：[Ultralytics TTA Tutorial](https://docs.ultralytics.com/yolov5/tutorials/test_time_augmentation)
 
-### Phase E — 缺陷热图
+#### P3 — 余力做（教学侧亮点 + 体验优化）
 
-- 数据库 `WeldingRecord` 加 `defect_bboxes` JSON 列（非破坏性迁移）
-- 后端 save_score 多存 bbox 数据
-- 前端历史记录页面单条点击 → 在原图上画 bbox；批次累积 → 热图
+- **E-P3-1 缺陷热图**（原 Phase E 单独项整合进来）
+  - 文件：`backend/models.py` 加 `WeldingRecord.defect_bboxes` JSON 列（非破坏性迁移）
+  - `save_score` 多存 `[[x,y,w,h,cls,conf], ...]`
+  - 前端学生页新增「缺陷热点图」：把该学生历次检测的 bbox 中心点叠在一张焊缝示意图上画 KDE 热图
+
+- **E-P3-2 AI 分析 schema 重试**
+  - 文件：`backend/ai_analysis.py`
+  - 现状一次失败就直接 fallback，演示体验差
+  - 改为：第一次失败时把"上次输出无法解析为 JSON，请严格按 schema"加到 user message，重试 1 次；2 次都失败再 fallback
+  - prompt 里附带 `severity_map`（`defect_types.py::get_severity_level`），AI 知道严重缺陷类别，建议会更具体
+  - pydantic 模型校验返回字段齐全度
+
+#### 工作量汇总
+
+| 优先级 | 任务数 | 累计工作量 |
+|---|---|---|
+| P0 | 3 | 1.5 天 |
+| P1 | 3 | 3 天 |
+| P2 | 3 | 2.5 天 |
+| P3 | 2 | 2 天 |
+| **合计** | **11** | **9 天** |
+
+7 天到冻结日：P0 + P1 + P2 必修（共 7 天），P3 视余力。
 
 ### Phase F — 冻结
 
 - 2026-05-27：只修 bug，不加功能；连跑 3 遍演示
 - 2026-05-28：打包备份（比赛电脑、U 盘、云盘）
 - 演示注意事项：
-  - **不要用 `npm run dev` 跑演示**。dev server 冷启动会按需编译路由（首次访问 `/` 因为编译未完成而返回 `_not-found` 404，刷新一次才正常）；务必用 `npm run build && npm run start` 跑生产模式
-  - 生产构建后预热一遍：启动后浏览器先访问一次 `/login` 和 `/`，让 Next.js 完成首次响应
+  - **不要用 `npm run dev` 跑演示**。dev server 冷启动会按需编译路由，首次访问可能返回 `_not-found` 404。务必用 `npm run build && npm run start`
+  - 生产构建后预热一遍：浏览器先访问 `/login` 和 `/`
 
 ---
 
-## 3. 决策摘要（2026-05-19 用户答复）
+## 3. 决策摘要
+
+### v3 决策（2026-05-19，部分被 v4 覆盖）
+
+| # | 议题 | 决策 | v4 状态 |
+|---|---|---|---|
+| 1 | 3D 路线 | 不由 Claude 负责 | 保留 |
+| 2 | TTS 播报 | 做 | **v4 撤销**（不属于算法创新） |
+| 3 | 教学/严格模式切换 | 做 | **v4 撤销**（涉及综合评分权重，与学校规定冲突） |
+| 4 | 演示降级模式 | 做 | 保留（D1 已完成） |
+| 5 | 标准对齐叙事 | PDF + 讲稿 | **v4 撤销**（用户自行写，不需代码改动） |
+| 6 | 演示数据预播种 | 做 | 保留（D3 已完成） |
+| 7 | `/predict/ai-radar-data` mock | 删 | 保留（D2 已完成） |
+| 8 | 缺陷空间标注 / 热图 | 最低优先级 | **v4 整合进 E-P3-1** |
+| 9 | 中英切换 | 不做 | 保留 |
+| 10 | 演示登录 | 新建导航 | 保留（C1 已完成） |
+| 11 | STRUCTURE_REPLAN 拆分 | 同意 | 保留 |
+| 12 | 任务流 | simplify → 原 P2 → 提案剩余 → 热图 | **v4 调整**：simplify → 原 P2（C 完成）→ 演示侧（D1-D3 完成）→ 算法升级（Phase E P0/P1/P2/P3） |
+
+### v4 新增决策（2026-05-22）
 
 | # | 议题 | 决策 |
 |---|---|---|
-| 1 | 3D 路线 | 不由 Claude 负责（团队其他成员处理） |
-| 2 | TTS 播报 | 做，仅重要事件（<60 分 / 严重缺陷 / 保存成功） |
-| 3 | 教学模式 / 严格模式切换 | 做 |
-| 4 | 演示降级模式 | 做 |
-| 5 | 标准对齐叙事 GB/T 19418 + 1+X | 做，仅 PDF 和讲稿，不进 README |
-| 6 | 演示数据预播种 | 做 |
-| 7 | `/predict/ai-radar-data` mock | 删 |
-| 8 | 缺陷空间标注 / 热图 | 列为最低优先级，最后做 |
-| 9 | 中英切换 | 不做 |
-| 10 | 演示登录放哪里 | 新建导航 |
-| 11 | 是否按 STRUCTURE_REPLAN 拆分 page.tsx / yolo_realtime.py | 同意，逐步拆 |
-| 12 | 任务流 | 先深度 /simplify → 完成原规划（不是 Claude 做的部分以外） → 完成提案剩余项 → 缺陷热图；代码改动等用户审核后再推 |
+| 13 | 综合评分权重 0.3/0.3/0.4 | **学校规定，不可改**；所有改进只改单项分数内部算法、检测推理侧、雷达图维度、预测算法 |
+| 14 | 检测硬件 | **只有单目 RGB 摄像头**，排除依赖激光/X 光/声学/深度相机的方案 |
+| 15 | 算法升级排序 | 按 P0（修语义+稳态）→ P1（ROI 引导 + 拟态过滤 + 标定）→ P2（深度模型 + 高光抑制 + TTA）→ P3（热图 + AI schema） |
+| 16 | 命名 | 旧 D4-D6 + 旧 Phase E 全部废弃；新算法升级清单挂在新 Phase E 下 |
 
 ---
 
@@ -187,12 +237,14 @@ A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完
   git push srtp main
   git push gitee main:dev-upgrade
   ```
+- **每次代码改动收尾时主动跑 `/simplify` 审一轮再请用户复核**（memory: feedback_simplify_after_changes）
+- **代码和注释不能露 AI 痕迹**：无 emoji、无 Args/Returns 模板、不写 phase 标签（如「E-P1-1 改造」）；写完前用 humanize 风格收一遍（memory: feedback_humanize_code_style）
 
 ---
 
 ## 5. 完成阶段后必做：更新 [PROJECT_MEMORY.md](./PROJECT_MEMORY.md)
 
-每个 Phase（A 完成 / B / C / D / E）结束都要追加修订条目到 §10：
+每个 Phase（E-P0 / E-P1 / E-P2 / E-P3 / F）结束都要追加修订条目到 §10：
 - 列出本阶段实际改动的文件
 - 标注是否仍有未完成项需要延期
 - 如有重大决策变更，回写到本文第 3 节
@@ -202,29 +254,44 @@ A5/A6 是与代码功能无关的清理，可以在 B/C 推进过程中穿插完
 ## 6. 关于其他成员的工作
 
 Claude 不写、不接、不调通联：
-
 - 3D 模型生成与展示（团队其他成员）
 - 原规划 P0/P1 除 3D 部分（团队其他成员）
 
 但 Claude 会留好接口供他们填：
-
 - 前端：`front/components/modules/ThreeDModule.tsx` 空壳 + `front/public/3d/` 目录
-- 后端：如果 P2 工作中发现某个端点需要 P0/P1 团队配合调整接口契约，告知用户、由用户协调
+- 后端：如果 Phase E 工作中发现某个端点需要 P0/P1 团队配合调整接口契约，告知用户、由用户协调
 
 ---
 
 ## 7. 关于硬件部分
 
-- "有线摄像头接入" 的**代码侧**（环境变量、UI、参数下发、状态显示）由 Claude 做。
+- "有线摄像头接入" 的**代码侧**已在 B1 完成。
 - 物理操作（插线、调光、对焦、装支架）由用户做。
-- 联调时机：B1 完成 + 用户实物到位 → 用户告知 → Claude 协助一起走 start-yolo + 视频流验证。
+- Phase E 标定（E-P1-3）依赖一把已知长度的钢直尺或标定卡——请用户提前准备并告知参考物的真实长度。
 
 ---
 
 ## 8. 现在的下一步
 
-1. ✅ 本文档 v3 修订完毕
-2. PROJECT_MEMORY.md / STRUCTURE_REPLAN.md 同步修订（去掉 Claude 拥有 P0/P1 的错误描述）
-3. 推送本次文档修订到双远程
-4. 进入 Phase B：B1 摄像头配置化（此前已部分开始，会重新对齐这个新边界）
-5. B1 → C1 → C2 → C3 → C4 → D1 → D2 → D3 → D4 → D5 → D6 → E → F
+1. ✅ 本文档 v4 修订完毕
+2. 推送本次文档修订到双远程（文档改动可直接双推，无需用户审核）
+3. 进入 Phase E：从 P0 开始
+   - E-P0-1 时序融合 + EMA + IoU
+   - E-P0-2 修预测时间轴语义
+   - E-P0-3 雷达 6 维洗白
+4. 每完成一个 P-级别（P0/P1/P2/P3）跑 `/simplify` + 等用户复核 → commit → 用户授权后双推
+5. P0 → P1 → P2 → P3 → F
+
+### 参考资料
+
+- [Real-Time Seam Extraction with Dynamic ROI (MDPI Sensors 2025)](https://pmc.ncbi.nlm.nih.gov/articles/PMC12157130/)
+- [Passive Vision Weld Seam ROI Detection (MDPI Sensors PMC12736899)](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC12736899/)
+- [Lightweight Multi-Frame Integration for YOLO (arxiv 2506.20550, 2025)](https://arxiv.org/html/2506.20550v1)
+- [MR2-ByteTrack for Video Object Detection (arxiv 2404.11488, 2024)](https://arxiv.org/pdf/2404.11488)
+- [Two-Stage Detection-Tracking Framework (arxiv 2602.19278)](https://arxiv.org/pdf/2602.19278)
+- [Weakly Supervised Specular Highlight Removal (MDPI Mathematics 2024)](https://www.mdpi.com/2227-7390/12/16/2578)
+- [Real-Time Weld Bead Width Measurement in GMAW (PMC5038773)](https://pmc.ncbi.nlm.nih.gov/articles/PMC5038773/)
+- [Measuring Planar Objects with Calibrated Camera (MathWorks)](https://www.mathworks.com/help/vision/ug/measuring-planar-objects-with-a-calibrated-camera.html)
+- [Camera Calibration for Manufacturing Inspection (NIST IR 7197)](https://nvlpubs.nist.gov/nistpubs/Legacy/IR/nistir7197.pdf)
+- [Period-Sensitive LSTM for Welding Quality (IEEE 2024)](https://ieeexplore.ieee.org/document/10716249/)
+- [Ultralytics Test-Time Augmentation Tutorial](https://docs.ultralytics.com/yolov5/tutorials/test_time_augmentation)
