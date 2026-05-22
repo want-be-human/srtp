@@ -364,6 +364,27 @@ SQLite ─→ /predict → RandomForest → 历史+预测折线
 
 ## 10. 修订历史
 
+### v4 — 2026-05-22 起 国赛 Phase E 算法升级
+
+EXECUTION_PLAN 进入 v4：旧 D4-D6 + 旧 Phase E 缺陷热图全部废弃，替换为 11 项检测/预测算法升级。触发是队友反馈三大痛点 + 两条硬约束（单目 RGB 摄像头、综合评分权重 0.3/0.3/0.4 是学校规定）。完整清单见 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md)。
+
+**E-P0 完成（commit `d1262c5`）**：
+
+| 文件 | 改动 |
+|---|---|
+| `backend/api/yolo_realtime.py` | 新增 `DetectionStabilizer`：5 帧滑动窗口 + IoU 关联 + 多帧确认（≥3 次才认）；track confidence 取窗口中位数；四项分数 EMA（α=0.4）+ 返回 round(2)，UI 不再出长尾 |
+| `backend/prediction.py` | 删 day_of_year/day_of_week/hour 三个时间特征（一节课里都是常数，对模型只是噪声）；模型时间维度只剩 attempt_index，外推 last + 1..5 |
+| `backend/api/predict.py::_aggregate_radar` | skill 雷达 6 维洗白：光滑度均值 / 宽度准度（vs OPTIMAL_WELD_WIDTH_MM）/ 缺陷控制均值 / 宽度稳定性（std）/ 进步速率（前 N vs 后 N）/ 缺陷集中度（distinct/7）；丢掉 (smooth+width)/2、defect·0.6+smooth·0.4、total·0.92 等派生公式 |
+| `backend/defect_types.py` | 新增 `NON_DEFECT_LABELS` frozenset，从 `DEFECT_EN_TO_CN['Good Weld']` 派生 + 加 DB 历史占位值 |
+| `backend/config.py` | 启动时读 `yolo_config.json::width_thresholds`，暴露 `OPTIMAL_WELD_WIDTH_MM=5.5`、`MIN_WELD_WIDTH_MM`、`MAX_WELD_WIDTH_MM`，下游不再硬编码 |
+| `front/components/prediction/prediction-dashboard.tsx` | `EMPTY_SKILL_DATA` 换成新 6 维名字；删掉「（待接入数字焊枪）」disclaimer（雷达现在是真数据） |
+
+仍未做但已识别的延期项：
+- `backend/api/lesson_plan.py:271` 还有第三份硬编码的 non-defect 标签集合 → 应改用 `NON_DEFECT_LABELS`
+- `front/components/comparison/student-comparison.tsx` 还在用旧的派生公式本地拼 6 维 → 应消费后端真实雷达数据
+
+下一步：E-P1（焊缝 ROI 引导 + 宽度复用 + 单目宽度标定），3 天。
+
 ### v3 — 2026-05-19 责任分工修正
 
 EXECUTION_PLAN 进入 v3：明确 Claude 实际只负责 4 块（有线摄像头代码侧、原规划 P2、提案非 P2 项、缺陷热图）；原规划 P0/P1 除 3D 外**不是** Claude 的工作。v1/v2 误把这些塞给了 Claude。
