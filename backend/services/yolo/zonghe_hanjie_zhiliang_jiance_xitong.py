@@ -40,6 +40,7 @@ try:
     from ultralytics import YOLO
     from .guanghuadu_jiance_qiqi import WeldingQualityScorer
     from .kuandu_jiance_qiqi import PreciseWeldDetector
+    from .weld_roi import WeldRoiTracker
 
     # torch 2.6 把 weights_only 默认改成 True，加载 best.pt 会爆白名单错误。
     # best.pt 来源可信，直接把 weights_only 默认改回 False。
@@ -75,13 +76,10 @@ except ImportError as e:
 class IntegratedWeldDetector:
     """焊缝质量综合检测系统"""
 
-    def __init__(self, config_file: str = None):
-        """
-        初始化综合检测系统
+    def __init__(self, config_file: str = None, pixels_per_mm: Optional[float] = None):
+        # pixels_per_mm 来自摄像头标定（CameraCalibration 表）；None 时宽度走估算
+        self.pixels_per_mm = pixels_per_mm
 
-        Args:
-            config_file: 配置文件路径
-        """
         # 加载配置
         self.config = self._load_config(config_file)
 
@@ -130,6 +128,9 @@ class IntegratedWeldDetector:
         """初始化各检测模块"""
         print("正在初始化检测模块...")
 
+        # 焊缝 ROI 跟踪器：跨帧复用上帧 bbox，给 YOLO 喂压过曝 + 背景衰减的输入
+        self.roi_tracker = WeldRoiTracker()
+
         # 1. 初始化光滑度检测器
         try:
             self.smoothness_detector = WeldingQualityScorer()
@@ -140,8 +141,13 @@ class IntegratedWeldDetector:
 
         # 2. 初始化宽度检测器
         try:
-            self.width_detector = PreciseWeldDetector(debug=False, image_height_cm=15.0)
-            print("✓ 宽度检测模块初始化完成")
+            self.width_detector = PreciseWeldDetector(
+                debug=False,
+                image_height_cm=15.0,
+                pixels_per_mm=self.pixels_per_mm,
+            )
+            cal_note = "已标定" if self.pixels_per_mm else "未标定，走估算"
+            print(f"✓ 宽度检测模块初始化完成（{cal_note}）")
         except Exception as e:
             print(f"✗ 宽度检测模块初始化失败: {e}")
             self.width_detector = None
@@ -216,8 +222,10 @@ class IntegratedWeldDetector:
             return {"width_mm": 0, "score": 0, "error": "宽度检测器未初始化"}
 
         try:
+            # ROI bbox 可能落后于 detect_defects 一帧（并行线程），但只用来圈搜索带，1 帧偏差无影响
             result = self.width_detector.enhanced_weld_detection(
-                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
+                roi_bbox=self.roi_tracker.last_bbox,
             )
 
             if result["found"]:
@@ -248,9 +256,11 @@ class IntegratedWeldDetector:
             }
 
         try:
-            # 使用GPU进行推理
+            # ROI 引导：HSV 抑制 + ROI 外像素衰减后再送 YOLO
+            yolo_input = self.roi_tracker.process(frame)
+
             results = self.yolo_model(
-                frame,
+                yolo_input,
                 conf=self.config["confidence_threshold"],
                 iou=self.config["iou_threshold"],
                 device=self.device,
@@ -259,52 +269,62 @@ class IntegratedWeldDetector:
 
             detections = []
             defect_score = 100  # 基础分数
-            debug_info = f"检测到{len(results)}个结果"
+            raw_count = 0
+            dropped_outside = 0
 
             if results[0].boxes is not None and len(results[0].boxes) > 0:
                 boxes = results[0].boxes
-                debug_info = f"检测到{len(boxes)}个目标"
+                raw_count = len(boxes)
 
-                for i in range(len(boxes)):
+                for i in range(raw_count):
                     box = boxes.xyxy[i].cpu().numpy()
                     conf = float(boxes.conf[i].cpu().numpy())
                     cls = int(boxes.cls[i].cpu().numpy())
 
-                    if conf >= self.config["confidence_threshold"]:
-                        class_name = self.defect_classes.get(cls, f"Unknown_{cls}")
-                        class_name_cn = self.defect_classes_cn.get(cls, "未知缺陷")
+                    if conf < self.config["confidence_threshold"]:
+                        continue
+                    # 中心点落在 ROI 外的框直接丢，避免 YOLO 在背景误检
+                    if not self.roi_tracker.should_keep_box(box.tolist()):
+                        dropped_outside += 1
+                        continue
 
-                        detection = {
-                            "box": box.tolist(),
-                            "confidence": float(conf),
-                            "class": int(cls),
-                            "class_name": str(class_name),
-                            "class_name_cn": str(class_name_cn),  # 添加中文名称
-                        }
-                        detections.append(detection)
+                    class_name = self.defect_classes.get(cls, f"Unknown_{cls}")
+                    class_name_cn = self.defect_classes_cn.get(cls, "未知缺陷")
 
-                        # 根据缺陷类型扣分（扩展17类缺陷）
-                        if cls == 3:  # Good Weld
-                            defect_score += 10
-                        elif cls in [0, 1, 4, 6, 7, 8, 9]:  # 严重缺陷
-                            # Poor Weld, Crack, Porosity, Undercut, Overlap, Incomplete Fusion, Inclusion
-                            defect_score -= 35
-                        elif cls in [2, 5, 10, 11, 12, 13, 14]:  # 中等缺陷
-                            # Excess Rebar, Spatter, Distortion, Surface Roughness, Excess Penetration, Misalignment, Arc Strike
-                            defect_score -= 20
-                        elif cls in [15, 16]:  # 轻微缺陷
-                            # Discoloration, Tool Mark
-                            defect_score -= 8
-            else:
-                debug_info = "未检测到任何目标"
+                    detections.append({
+                        "box": box.tolist(),
+                        "confidence": float(conf),
+                        "class": int(cls),
+                        "class_name": str(class_name),
+                        "class_name_cn": str(class_name_cn),
+                    })
+
+                    # 根据缺陷类型扣分（扩展17类缺陷）
+                    if cls == 3:  # Good Weld
+                        defect_score += 10
+                    elif cls in [0, 1, 4, 6, 7, 8, 9]:  # 严重缺陷
+                        # Poor Weld, Crack, Porosity, Undercut, Overlap, Incomplete Fusion, Inclusion
+                        defect_score -= 35
+                    elif cls in [2, 5, 10, 11, 12, 13, 14]:  # 中等缺陷
+                        # Excess Rebar, Spatter, Distortion, Surface Roughness, Excess Penetration, Misalignment, Arc Strike
+                        defect_score -= 20
+                    elif cls in [15, 16]:  # 轻微缺陷
+                        # Discoloration, Tool Mark
+                        defect_score -= 8
 
             defect_score = max(0, min(100, defect_score))
+            roi_active = self.roi_tracker.last_bbox is not None
+            debug_info = (
+                f"YOLO {raw_count} 框，ROI 内保留 {len(detections)}，剔除 {dropped_outside}"
+                if roi_active else f"YOLO {raw_count} 框（ROI 未建立）"
+            )
 
             return {
                 "detections": detections,
                 "score": float(defect_score),
                 "debug_info": str(debug_info),
                 "detection_count": int(len(detections)),
+                "seam_theta": float(self.roi_tracker.last_theta),
                 "annotated_frame": results[0].plot()
                 if results[0].boxes is not None
                 else frame,

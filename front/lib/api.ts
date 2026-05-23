@@ -46,6 +46,11 @@ export const API_ENDPOINTS = {
 
   // 登录
   AUTH_LOGIN: `${API_BASE_URL}/api/v1/auth/login`,
+
+  // 摄像头标定 + 当前帧抓图
+  CALIBRATION_SAVE: `${API_BASE_URL}/api/v1/calibration/save`,
+  CALIBRATION_CURRENT: `${API_BASE_URL}/api/v1/calibration/current`,
+  SNAPSHOT: `${API_BASE_URL}/api/v1/snapshot`,
 };
 
 export default API_BASE_URL;

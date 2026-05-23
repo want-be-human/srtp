@@ -329,9 +329,19 @@ def inference_loop():
     try:
         # 初始化YOLO检测器
         if YOLO_AVAILABLE and IntegratedWeldDetector:
+            # 摄像头标定值（如有），让 PreciseWeldDetector 把宽度像素换算成真实 mm
+            try:
+                from api.calibration import load_calibration_pixels_per_mm
+                pixels_per_mm = load_calibration_pixels_per_mm()
+            except Exception:
+                pixels_per_mm = None
             with detector_lock:
-                detector = IntegratedWeldDetector(config_file=YOLO_CONFIG_FILE)
-            print("✓ YOLO检测器初始化成功（推理线程）")
+                detector = IntegratedWeldDetector(
+                    config_file=YOLO_CONFIG_FILE,
+                    pixels_per_mm=pixels_per_mm,
+                )
+            cal_msg = f"标定 {pixels_per_mm:.3f} px/mm" if pixels_per_mm else "未标定"
+            print(f"✓ YOLO检测器初始化成功（推理线程，{cal_msg}）")
         else:
             print("⚠ YOLO不可用（推理线程使用模拟数据）")
             detector = None
@@ -884,6 +894,26 @@ async def video_stream(
         generate_video_stream(fps=fps, quality=quality, width=width, height=height),
         media_type="multipart/x-mixed-replace; boundary=frame"
     )
+
+
+@router.get("/snapshot")
+async def get_snapshot():
+    """返回当前 latest_frame 的 JPEG base64，供前端标定面板抓静态画面。"""
+    global latest_frame, is_detecting
+    if not is_detecting:
+        raise HTTPException(status_code=409, detail="检测未启动，请先开启实时检测再抓画面")
+    with frame_lock:
+        if latest_frame is None:
+            raise HTTPException(status_code=503, detail="暂无可用画面，请稍后重试")
+        frame = latest_frame.copy()
+    ok, buf = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not ok:
+        raise HTTPException(status_code=500, detail="画面编码失败")
+    return {
+        "image_base64": base64.b64encode(buf.tobytes()).decode("ascii"),
+        "width": int(frame.shape[1]),
+        "height": int(frame.shape[0]),
+    }
 
 
 @router.post("/detect-frame")

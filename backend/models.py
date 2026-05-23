@@ -36,3 +36,19 @@ class Student(Base):
     password_hash = Column(String(255), nullable=False)
     batch_id = Column(String(50), nullable=True, index=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class CameraCalibration(Base):
+    """摄像头单目宽度标定记录。一个 camera_id 一行，新标定 upsert 覆盖旧值。"""
+    __tablename__ = "camera_calibrations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    camera_id = Column(String(100), unique=True, nullable=False, index=True,
+                       comment="摄像头标识；多机时区分，单机演示用 'default'")
+    pixels_per_mm = Column(Float, nullable=False, comment="每毫米对应的像素数")
+    ref_distance_pixels = Column(Float, nullable=False, comment="参考物在画面里量到的像素长度")
+    ref_distance_mm = Column(Float, nullable=False, comment="参考物的真实长度 (mm)")
+    image_width = Column(Integer, nullable=False, comment="标定时画面宽，分辨率变了应重新标定")
+    image_height = Column(Integer, nullable=False, comment="标定时画面高")
+    calibrated_at = Column(DateTime(timezone=True),
+                           server_default=func.now(), onupdate=func.now())

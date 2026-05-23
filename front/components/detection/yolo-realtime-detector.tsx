@@ -93,6 +93,10 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
   const startYOLODetection = async () => {
     try {
       setError('')
+      // 旧的 <img> 若还在挂着 MJPEG，先卸载一次，浏览器才会真的断开 socket。
+      // React 18 在 await 之后会打断 setState batch，让"无 <img>"那一帧真的渲染出来。
+      setVideoStreamUrl('')
+      await new Promise((r) => setTimeout(r, 0))
       const activeUrl = resolveCameraUrl()
       // 空字符串时不传 camera_url 字段，让后端走 camera_id=0 默认
       const body: Record<string, unknown> = {}
@@ -430,6 +434,7 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                 </div>
               ) : videoStreamUrl ? (
                 <img
+                  key={videoStreamUrl}
                   src={videoStreamUrl}
                   alt="YOLO实时检测视频流"
                   className="w-full h-full object-contain"

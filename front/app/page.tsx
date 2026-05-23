@@ -17,6 +17,7 @@ import { YOLORealtimeDetector, initialYOLOLiveState, type YOLOLiveState } from "
 import { ParticleField } from "../components/particle-field"
 import { DataTreeContent } from "../components/data-tree/data-tree-content"
 import { StudentComparisonContent } from "../components/comparison/student-comparison"
+import { CameraCalibrationCard } from "../components/settings/camera-calibration"
 
 // 定义检测结果的类型接口
 interface DetectionResult {
@@ -894,6 +895,9 @@ function ParticleArtCard() {
 function SystemSettingsContent() {
   return (
     <div className="space-y-6">
+      {/* 摄像头标定 */}
+      <CameraCalibrationCard />
+
       {/* 粒子艺术卡片 - 独立模块，可整体替换 */}
       <ParticleArtCard />
 
