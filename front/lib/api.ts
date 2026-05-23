@@ -5,6 +5,7 @@ export const API_ENDPOINTS = {
   // YOLO检测
   START_YOLO: `${API_BASE_URL}/api/v1/start-yolo`,
   STOP_YOLO: `${API_BASE_URL}/api/v1/stop-yolo`,
+  LIST_CAMERAS: `${API_BASE_URL}/api/v1/list-cameras`,
   YOLO_DATA: `${API_BASE_URL}/api/v1/yolo-data`,
   VIDEO_STREAM: `${API_BASE_URL}/api/v1/video-stream`,
   DETECT: `${API_BASE_URL}/api/v1/detect`,

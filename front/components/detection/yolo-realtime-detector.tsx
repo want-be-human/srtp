@@ -5,18 +5,18 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Camera, CameraOff, Settings, TrendingUp, Upload, Image as ImageIcon } from "lucide-react"
 import { API_ENDPOINTS } from "@/lib/api"
-import { StorageKey, getString, setString, remove, getPredictionCacheKey } from "@/lib/storage"
+import { getPredictionCacheKey } from "@/lib/storage"
 import { useDataTree } from '@/components/data-tree/data-tree-context'
 import { convertYOLOToTreeData } from '@/components/data-tree/data-adapter'
 import { useAuth } from "@/contexts/AuthContext"
-
-// 优先用 localStorage 里手工配的地址，没有就退回 env，再没有给空字符串
-// （空字符串后端会用 camera_id=0 走本地相机）
-function resolveCameraUrl(): string {
-  const fromStorage = getString(StorageKey.CAMERA_URL, "")
-  if (fromStorage) return fromStorage
-  return process.env.NEXT_PUBLIC_CAMERA_URL || ""
-}
+import { CameraSelector } from "./camera-selector"
+import {
+  type CameraChoice,
+  readCameraChoice,
+  envFallbackChoice,
+  describeChoice,
+  buildStartBody,
+} from "@/lib/camera-config"
 
 // YOLO检测结果的类型定义
 export interface YOLODetectionResult {
@@ -64,30 +64,17 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
   // 这几项重进就重置即可，不用保活
   const [error, setError] = useState<string>('')
   const [isUploading, setIsUploading] = useState(false)
-  const [cameraUrl, setCameraUrl] = useState<string>('')
+  const [cameraChoice, setCameraChoice] = useState<CameraChoice>({ mode: "default" })
+  const [selectorOpen, setSelectorOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { addTreeData } = useDataTree()
   const { currentUser } = useAuth()
 
+  // 还原用户上次的选择；没有就看 env 兜底
   useEffect(() => {
-    setCameraUrl(resolveCameraUrl())
+    const stored = readCameraChoice()
+    setCameraChoice(stored.mode === "default" ? envFallbackChoice() : stored)
   }, [])
-
-  const handleConfigureCamera = () => {
-    const current = resolveCameraUrl()
-    const next = window.prompt(
-      "摄像头地址（留空使用本地 USB / 有线相机）\n例：http://用户名:密码@IP:端口/",
-      current,
-    )
-    if (next === null) return  // 用户取消
-    const trimmed = next.trim()
-    if (trimmed) {
-      setString(StorageKey.CAMERA_URL, trimmed)
-    } else {
-      remove(StorageKey.CAMERA_URL)
-    }
-    setCameraUrl(resolveCameraUrl())
-  }
 
   // 启动后端YOLO检测
   const startYOLODetection = async () => {
@@ -97,10 +84,7 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
       // React 18 在 await 之后会打断 setState batch，让"无 <img>"那一帧真的渲染出来。
       setVideoStreamUrl('')
       await new Promise((r) => setTimeout(r, 0))
-      const activeUrl = resolveCameraUrl()
-      // 空字符串时不传 camera_url 字段，让后端走 camera_id=0 默认
-      const body: Record<string, unknown> = {}
-      if (activeUrl) body.camera_url = activeUrl
+      const body = buildStartBody(cameraChoice)
       const response = await fetch(API_ENDPOINTS.START_YOLO, {
         method: 'POST',
         headers: {
@@ -346,6 +330,11 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 h-full">
+      <CameraSelector
+        open={selectorOpen}
+        onOpenChange={setSelectorOpen}
+        onSaved={setCameraChoice}
+      />
       {/* 左侧：摄像头检测区域 */}
       <div className="lg:col-span-2">
         <Card className="bg-slate-800/50 border-slate-600 h-full">
@@ -372,8 +361,8 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                 <Button
                   size="sm"
                   className="bg-slate-700 hover:bg-slate-600 text-white border border-slate-500"
-                  onClick={handleConfigureCamera}
-                  title={cameraUrl ? `当前摄像头: ${cameraUrl}` : "当前: 本地 USB / 有线相机"}
+                  onClick={() => setSelectorOpen(true)}
+                  title={`当前: ${describeChoice(cameraChoice)}`}
                 >
                   <Settings className="w-4 h-4" />
                 </Button>

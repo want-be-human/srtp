@@ -5,6 +5,7 @@ const NS = "srtp:"
 
 export const StorageKey = {
   CAMERA_URL: `${NS}camera_url`,
+  CAMERA_INDEX: `${NS}camera_index`,
   AUTH_USER: `${NS}auth_user`,
   DATA_TREE: `${NS}data_tree`,
   PREDICTION_CACHE: `${NS}prediction_cache`,

@@ -71,15 +71,20 @@ frame_lock = threading.Lock()
 detector_lock = threading.Lock()
 
 # ====== 可配置的默认参数（可通过 /video-stream 查询参数覆盖） ======
-# 目标摄像头抓帧FPS（实际取决于相机/驱动能力）
-TARGET_CAMERA_FPS = 60
+# 目标摄像头抓帧FPS：下游 STREAM 30、INFERENCE 6，抓 60 一半帧会被覆盖浪费
+TARGET_CAMERA_FPS = 30
 # MJPEG 推流默认FPS
 STREAM_DEFAULT_FPS = 30
 # JPEG 编码默认质量（10-95，越低压缩越狠、带宽越小）
-JPEG_DEFAULT_QUALITY = 70
-# 默认推流分辨率（编码前可选缩放，降低编码负载）
-DEFAULT_WIDTH = 640
-DEFAULT_HEIGHT = 360
+JPEG_DEFAULT_QUALITY = 85
+# 请求相机源分辨率：2K 相机走 2K，YOLO 拿到 2K 原图后内部 letterbox 到 imgsz=1280
+CAPTURE_REQ_WIDTH = 2560
+CAPTURE_REQ_HEIGHT = 1440
+# video_stream 默认推流分辨率：1080p 而不是 2K。
+# 2K JPEG 单线程编码 ~75ms/帧，单线程跑不到 30fps；1080p 编码 ~30ms 能稳 30fps。
+# 想看 2K 流前端在 URL 加 ?width=2560&height=1440 即可（接受 12fps）
+DEFAULT_WIDTH = 1920
+DEFAULT_HEIGHT = 1080
 # 推理目标频率（每秒几次YOLO）
 INFERENCE_FPS = 6
 
@@ -93,6 +98,38 @@ STABILIZER_IOU = 0.3
 STABILIZER_TRACK_TTL = 5
 # 分数指数滑动平均权重：smoothed = ALPHA * new + (1 - ALPHA) * smoothed
 STABILIZER_EMA_ALPHA = 0.4
+
+
+class FpsMeter:
+    """每 window_s 秒打一行实测 fps + 单帧 work_label 平均耗时。
+
+    capture_loop 和 generate_video_stream 都要测自己的 fps + 内部某一段耗时，
+    单独写两份很容易在 divide-by-zero 守卫上漂移，统一到这里。
+    """
+
+    def __init__(self, label: str, work_label: str = "work", window_s: float = 5.0):
+        self.label = label
+        self.work_label = work_label
+        self.window_s = window_s
+        self.count = 0
+        self.work_total = 0.0
+        self.window_start = time.perf_counter()
+
+    def tick(self, work_seconds: float, *, suffix: str = "") -> None:
+        """记一帧（含本帧 work_seconds 耗时），到窗口边界就打日志并复位。"""
+        self.count += 1
+        self.work_total += work_seconds
+        now = time.perf_counter()
+        elapsed = now - self.window_start
+        if elapsed < self.window_s:
+            return
+        fps = self.count / elapsed
+        avg_ms = self.work_total / max(1, self.count) * 1000
+        tail = f"，{suffix}" if suffix else ""
+        print(f"[{self.label}] 实测 {fps:.1f} fps，{self.work_label} 平均 {avg_ms:.1f} ms/帧{tail}")
+        self.count = 0
+        self.work_total = 0.0
+        self.window_start = now
 
 
 def _box_iou(a, b):
@@ -283,27 +320,31 @@ def get_db():
 
 
 def capture_loop(camera_source):
-    """摄像头抓帧循环（后台线程）：仅负责读取相机帧并更新 latest_frame
-    
-    Args:
-        camera_source: 可以是整数(设备ID)或字符串(IP摄像头URL)
+    """摄像头抓帧循环（后台线程）：读取相机帧并更新 latest_frame。
+
+    camera_source 是整数（USB 设备 index）或字符串（IP 摄像头 URL）。
     """
     global is_detecting, camera_cap, latest_frame
 
     try:
         # 注意：抓帧线程不初始化YOLO，YOLO在推理线程初始化
 
-        # 打开摄像头（用于视频流推送和YOLO检测）
-        camera_cap = cv2.VideoCapture(camera_source)
+        # 打开摄像头：USB 设备优先 MSMF。DSHOW 在 Windows 上 set FOURCC 经常 silently
+        # fail —— 相机回退未压缩 YUYV，2K 单帧 7.4MB 在 USB 2.0 上传不动 → fps 跌到 2-3。
+        # MSMF 协商更可靠（启动慢 1-2s），打不开时再退 DSHOW。URL 走 FFMPEG，沿用 CAP_ANY
+        if isinstance(camera_source, int):
+            camera_cap = cv2.VideoCapture(camera_source, cv2.CAP_MSMF)
+            if not camera_cap.isOpened():
+                print("MSMF 打开失败，回退到 DSHOW")
+                camera_cap = cv2.VideoCapture(camera_source, cv2.CAP_DSHOW)
+        else:
+            camera_cap = cv2.VideoCapture(camera_source)
         if not camera_cap.isOpened():
             print(f"✗ 无法打开摄像头 {camera_source}")
             is_detecting = False
             return
 
-        # 设置摄像头参数
-        camera_cap.set(cv2.CAP_PROP_FRAME_WIDTH, DEFAULT_WIDTH)
-        camera_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, DEFAULT_HEIGHT)
-        # 优先请求MJPG以降低USB摄像头压缩负载与延迟（若驱动支持）
+        # MJPG fourcc 必须在 set 分辨率之前，否则部分相机在 YUYV 下不接受 1080p
         try:
             fourcc_fn = getattr(cv2, 'VideoWriter_fourcc', None)
             if fourcc_fn is not None:
@@ -311,36 +352,44 @@ def capture_loop(camera_source):
                 camera_cap.set(cv2.CAP_PROP_FOURCC, fourcc)
         except Exception:
             pass
-        # 目标帧率（相机可能不完全遵循）
+        camera_cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAPTURE_REQ_WIDTH)
+        camera_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAPTURE_REQ_HEIGHT)
         camera_cap.set(cv2.CAP_PROP_FPS, TARGET_CAMERA_FPS)
-        # 尝试减少缓冲，降低延迟（并非所有平台支持）
         try:
             camera_cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception:
             pass
 
-        print(f"✓ 摄像头 {camera_source} 已打开，开始抓帧")
+        actual_w = int(camera_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        actual_h = int(camera_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        actual_fps = camera_cap.get(cv2.CAP_PROP_FPS)
+        # fourcc 的 int 编码解回 ASCII 看相机实际跑哪种格式；不是 MJPG 几乎一定带宽爆
+        fourcc_int = int(camera_cap.get(cv2.CAP_PROP_FOURCC))
+        fourcc_str = bytes([(fourcc_int >> (8 * i)) & 0xff for i in range(4)]).decode('ascii', errors='replace')
+        print(f"✓ 摄像头 {camera_source} 已打开，源 {actual_w}x{actual_h}，输出 {DEFAULT_WIDTH}x{DEFAULT_HEIGHT}")
+        print(f"  fourcc='{fourcc_str}' (空字符串=MSMF 不暴露此值，看下方 capture fps 反推)，驱动报告 fps={actual_fps:.1f} (请求 {TARGET_CAMERA_FPS})")
+        if fourcc_str and fourcc_str != 'MJPG':
+            print("  WARN: 不是 MJPG，相机跑未压缩格式，USB 2.0 带宽不够，fps 会暴跌到个位数")
 
         # 基于高精度计时的节流，减少抖动
         next_frame_time = time.perf_counter()
+        # 实测 fps + 每帧 read+解码 耗时，定位"请求 30 实际只跑到几"
+        fps_meter = FpsMeter("capture", "相机 read+解码")
 
         while is_detecting:
+            t_read = time.perf_counter()
             ret, frame = camera_cap.read()
+            read_dt = time.perf_counter() - t_read
             if not ret:
                 print("✗ 无法读取摄像头帧")
                 time.sleep(0.01)
                 continue
 
-            # 裁剪中心区域并放大（相当于3倍变焦）
-            h, w = frame.shape[:2]
-            crop_w, crop_h = w // 3, h // 3
-            start_x, start_y = (w - crop_w) // 2, (h - crop_h) // 2
-            cropped = frame[start_y:start_y+crop_h, start_x:start_x+crop_w]
-            frame = cv2.resize(cropped, (w, h))
-
             # 更新最新帧（用于视频流 & 推理）
             with frame_lock:
                 latest_frame = frame.copy()
+
+            fps_meter.tick(read_dt, suffix=f"请求 {TARGET_CAMERA_FPS}")
 
             # 控制抓帧节奏，趋近 TARGET_CAMERA_FPS
             next_frame_time += 1.0 / max(1, TARGET_CAMERA_FPS)
@@ -480,6 +529,53 @@ def inference_loop():
         with detector_lock:
             detector = None
         print("推理循环已停止")
+
+
+def _probe_cameras(max_index: int = 5, max_consecutive_miss: int = 2) -> List[dict]:
+    """没有 pygrabber 时的退路：硬开 0..N-1，能打开就当存在。
+
+    显式走 CAP_DSHOW 而不是 CAP_ANY —— CAP_ANY 会轮询 MSMF / DSHOW /
+    Orbbec(深度相机) 等多个后端，没接深度相机时 Orbbec 会刷 obsensor
+    `Camera index out of range` 错日志且每个 index 卡几百 ms。
+    连续 max_consecutive_miss 个 index 失败就 break，避免空跑到 max_index。
+    """
+    found: List[dict] = []
+    miss = 0
+    for i in range(max_index):
+        cap = cv2.VideoCapture(i, cv2.CAP_DSHOW)
+        try:
+            if cap.isOpened():
+                found.append({"index": i, "name": f"摄像头 {i}"})
+                miss = 0
+            else:
+                miss += 1
+                if miss >= max_consecutive_miss:
+                    break
+        finally:
+            # isOpened() 为 False 时 DirectShow 仍可能持着句柄，无脑释放
+            cap.release()
+    return found
+
+
+@router.get("/list-cameras")
+async def list_cameras():
+    """枚举本机可用摄像头（Windows 走 DirectShow 拿友好名）。
+
+    返回的 index 就是 cv2.VideoCapture(i) 用的设备序号；用户在前端选好哪个是平面
+    检测摄像头后，启动检测时回传 camera_id 即可。
+    """
+    try:
+        from pygrabber.dshow_graph import FilterGraph
+        names = FilterGraph().get_input_devices()
+        cameras = [{"index": i, "name": n} for i, n in enumerate(names)]
+    except ImportError:
+        cameras = _probe_cameras()
+    except Exception as e:
+        # pygrabber 在某些 OBS / 虚拟相机配置下会抛 COM 错，退回探测
+        print(f"pygrabber 枚举失败，回退暴力探测: {e}")
+        cameras = _probe_cameras()
+
+    return {"status": "success", "cameras": cameras, "count": len(cameras)}
 
 
 @router.post("/start-yolo")
@@ -911,14 +1007,16 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
     frame_interval = 1.0 / max(1, fps)
     next_send_time = time.perf_counter()
 
+    # 待机黑屏帧只构造一次：2K 时 zeros((1440,2560,3)) 是 ~10MB，每帧重分配很贵
+    idle_frame = np.zeros((height, width, 3), dtype=np.uint8)
+    cv2.putText(idle_frame, "Camera not started", (150, 240),
+               cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+    fps_meter = FpsMeter("stream", "JPEG 编码")
+
     while True:
         if not is_detecting or latest_frame is None:
-            # 如果没有检测在运行，返回黑屏
-            black_frame = np.zeros((height, width, 3), dtype=np.uint8)
-            cv2.putText(black_frame, "Camera not started", (150, 240),
-                       cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-
-            ret, buffer = cv2.imencode('.jpg', black_frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+            ret, buffer = cv2.imencode('.jpg', idle_frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
             if ret:
                 frame_bytes = buffer.tobytes()
                 yield (b'--frame\r\n'
@@ -997,9 +1095,13 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
                                   font, 0.6, color, 2)
 
         # 编码为JPEG
+        t_enc = time.perf_counter()
         ret, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
+        encode_dt = time.perf_counter() - t_enc
         if not ret:
             continue
+
+        fps_meter.tick(encode_dt, suffix=f"请求 {fps}，{width}x{height} q={quality}")
 
         frame_bytes = buffer.tobytes()
 
@@ -1018,8 +1120,8 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
 async def video_stream(
     fps: int = Query(STREAM_DEFAULT_FPS, ge=1, le=120, description="目标推流FPS"),
     quality: int = Query(JPEG_DEFAULT_QUALITY, ge=10, le=95, description="JPEG质量(10-95)"),
-    width: int = Query(DEFAULT_WIDTH, ge=160, le=1920, description="编码宽度"),
-    height: int = Query(DEFAULT_HEIGHT, ge=120, le=1080, description="编码高度"),
+    width: int = Query(DEFAULT_WIDTH, ge=160, le=2560, description="编码宽度"),
+    height: int = Query(DEFAULT_HEIGHT, ge=120, le=1440, description="编码高度"),
 ):
     """MJPEG视频流接口（支持通过查询参数调整FPS/质量/分辨率）"""
     return StreamingResponse(

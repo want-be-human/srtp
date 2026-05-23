@@ -36,6 +36,9 @@ seaborn==0.13.2
 
 # 图像处理
 opencv-python==4.9.0.80
+# Windows 上 DirectShow 摄像头枚举（前端摄像头选择器要拿设备友好名）；
+# 非 Windows 环境装不上也无所谓，/list-cameras 会自动退回暴力探测 index
+pygrabber>=0.2 ; platform_system == "Windows"
 
 # 登录密码哈希
 bcrypt>=4.0,<5.0
