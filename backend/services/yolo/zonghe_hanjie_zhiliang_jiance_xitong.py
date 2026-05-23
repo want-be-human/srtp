@@ -245,8 +245,20 @@ class IntegratedWeldDetector:
         except Exception as e:
             return {"width_mm": 0, "score": 0, "error": str(e)}
 
-    def detect_defects(self, frame: np.ndarray) -> Dict:
-        """检测缺陷类型（支持GPU加速）"""
+    def _apply_defect_score(self, current: int, cls: int) -> int:
+        """根据 cls 严重等级调整 defect_score；未识别的 cls 维持不变。"""
+        if cls == 3:  # Good Weld
+            return current + 10
+        if cls in (0, 1, 4, 6, 7, 8, 9):  # 严重
+            return current - 35
+        if cls in (2, 5, 10, 11, 12, 13, 14):  # 中等
+            return current - 20
+        if cls in (15, 16):  # 轻微
+            return current - 8
+        return current
+
+    def detect_defects(self, frame: np.ndarray, use_tta: bool = False) -> Dict:
+        """检测缺陷类型；use_tta=True 时走 ultralytics 内置 augment（多尺度+翻转 TTA），实时流默认关。"""
         if self.yolo_model is None:
             return {
                 "detections": [],
@@ -265,6 +277,7 @@ class IntegratedWeldDetector:
                 iou=self.config["iou_threshold"],
                 device=self.device,
                 verbose=False,
+                augment=use_tta,
             )
 
             detections = []
@@ -283,40 +296,25 @@ class IntegratedWeldDetector:
 
                     if conf < self.config["confidence_threshold"]:
                         continue
-                    # 中心点落在 ROI 外的框直接丢，避免 YOLO 在背景误检
                     if not self.roi_tracker.should_keep_box(box.tolist()):
                         dropped_outside += 1
                         continue
-
-                    class_name = self.defect_classes.get(cls, f"Unknown_{cls}")
-                    class_name_cn = self.defect_classes_cn.get(cls, "未知缺陷")
 
                     detections.append({
                         "box": box.tolist(),
                         "confidence": float(conf),
                         "class": int(cls),
-                        "class_name": str(class_name),
-                        "class_name_cn": str(class_name_cn),
+                        "class_name": str(self.defect_classes.get(cls, f"Unknown_{cls}")),
+                        "class_name_cn": str(self.defect_classes_cn.get(cls, "未知缺陷")),
                     })
-
-                    # 根据缺陷类型扣分（扩展17类缺陷）
-                    if cls == 3:  # Good Weld
-                        defect_score += 10
-                    elif cls in [0, 1, 4, 6, 7, 8, 9]:  # 严重缺陷
-                        # Poor Weld, Crack, Porosity, Undercut, Overlap, Incomplete Fusion, Inclusion
-                        defect_score -= 35
-                    elif cls in [2, 5, 10, 11, 12, 13, 14]:  # 中等缺陷
-                        # Excess Rebar, Spatter, Distortion, Surface Roughness, Excess Penetration, Misalignment, Arc Strike
-                        defect_score -= 20
-                    elif cls in [15, 16]:  # 轻微缺陷
-                        # Discoloration, Tool Mark
-                        defect_score -= 8
+                    defect_score = self._apply_defect_score(defect_score, cls)
 
             defect_score = max(0, min(100, defect_score))
+            tag = "TTA" if use_tta else "YOLO"
             roi_active = self.roi_tracker.last_bbox is not None
             debug_info = (
-                f"YOLO {raw_count} 框，ROI 内保留 {len(detections)}，剔除 {dropped_outside}"
-                if roi_active else f"YOLO {raw_count} 框（ROI 未建立）"
+                f"{tag} {raw_count} 框，ROI 内保留 {len(detections)}，剔除 {dropped_outside}"
+                if roi_active else f"{tag} {raw_count} 框（ROI 未建立）"
             )
 
             return {
@@ -331,6 +329,10 @@ class IntegratedWeldDetector:
             }
         except Exception as e:
             return {"detections": [], "score": 0, "error": str(e)}
+
+    def detect_defects_with_tta(self, frame: np.ndarray) -> Dict:
+        """ultralytics 自带 augment=True 跑 TTA，比单次推理稳，保存按键时调。"""
+        return self.detect_defects(frame, use_tta=True)
 
     def _calculate_width_score(self, width_mm: float) -> float:
         """根据宽度计算得分"""

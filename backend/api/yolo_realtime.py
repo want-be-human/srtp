@@ -7,6 +7,7 @@ YOLO实时检测API
 3. 用户按键时保存分数
 """
 
+import asyncio
 import sys
 import os
 import threading
@@ -585,6 +586,38 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
                 return max(0.0, min(100.0, float(value)))
             except (TypeError, ValueError):
                 return 0.0
+
+        # 保存前用 TTA 重新算一次，入库分数比实时显示更稳。
+        # 关键：roi_tracker.process 没有内部锁，必须拿 detector_lock 不让 inference_loop
+        # 同时跑同一个 tracker。整段 detector 调用一起进线程池，事件循环不阻塞。
+        if detector is not None and latest_frame is not None and is_detecting:
+            try:
+                with frame_lock:
+                    snap = latest_frame.copy()
+
+                def _run_under_detector_lock():
+                    with detector_lock:
+                        tta = detector.detect_defects_with_tta(snap)
+                        sm = detector.detect_smoothness(snap)
+                        wd = detector.detect_width(snap)
+                    return detector.calculate_total_score(sm, wd, tta), tta, wd
+
+                composite, tta_def, wd = await asyncio.to_thread(_run_under_detector_lock)
+                data.smoothness_score = composite["smoothness_score"]
+                data.width_score = composite["width_score"]
+                data.defect_score = composite["defect_score"]
+                data.total_score = composite["total_score"]
+                if wd.get("width_mm"):
+                    data.width_mm = float(wd["width_mm"])
+                if tta_def.get("detections"):
+                    data.defect_type_name = (
+                        tta_def["detections"][0].get("class_name_cn")
+                        or data.defect_type_name
+                    )
+                print(f"save-score 用 TTA 重算: {tta_def.get('debug_info', '')}")
+            except Exception as exc:
+                # TTA 失败不阻断保存，沿用前端传来的瞬时分数
+                print(f"save-score TTA 失败，沿用前端分数: {exc}")
 
         # 创建数据库记录
         db_record = models.WeldingRecord(
