@@ -44,6 +44,9 @@ export const API_ENDPOINTS = {
   STUDENT_COMPARISON: `${API_BASE_URL}/api/v1/student-comparison`,
   BATCH_LIST: `${API_BASE_URL}/api/v1/batch-list`,
 
+  // 缺陷热图（按学号聚合历史按键记录里的 bbox）
+  DETECTION_HEATMAP: `${API_BASE_URL}/api/v1/detection-heatmap`,
+
   // 登录
   AUTH_LOGIN: `${API_BASE_URL}/api/v1/auth/login`,
 

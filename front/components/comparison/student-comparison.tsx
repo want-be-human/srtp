@@ -19,6 +19,7 @@ import { useAuth } from "@/contexts/AuthContext"
 import type { TreeData } from "@/components/data-tree/data-tree-context"
 import { DataTreeViewer } from "@/components/data-tree/data-tree-viewer"
 import { convertYOLOToTreeData } from "@/components/data-tree/data-adapter"
+import { DefectHeatmap } from "@/components/comparison/defect-heatmap"
 
 interface StudentStats {
   student_id: string
@@ -349,6 +350,17 @@ export function StudentComparisonContent() {
           </div>
         </CardContent>
       </Card>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <DefectHeatmap
+          studentId={currentUser.student_id}
+          studentName={currentUser.name}
+        />
+        <DefectHeatmap
+          studentId={opponentId || null}
+          studentName={opponentStats?.student_name ?? null}
+        />
+      </div>
     </div>
   )
 }

@@ -18,6 +18,27 @@ from api import teacher, dashboard, predict, lesson_plan, yolo_realtime, auth, c
 # 创建数据库表
 models.Base.metadata.create_all(bind=engine)
 
+
+def _ensure_welding_records_columns() -> None:
+    # 老库没有 defect_bboxes，create_all 不会补列，这里幂等地 ALTER 一下
+    from sqlalchemy import inspect, text
+    from sqlalchemy.exc import SQLAlchemyError
+    try:
+        insp = inspect(engine)
+        if "welding_records" not in insp.get_table_names():
+            return
+        cols = {c["name"] for c in insp.get_columns("welding_records")}
+        if "defect_bboxes" in cols:
+            return
+        with engine.begin() as conn:
+            conn.execute(text("ALTER TABLE welding_records ADD COLUMN defect_bboxes JSON"))
+    except SQLAlchemyError as exc:
+        # DB 被锁/权限不足等场景，热图功能降级（端点返回空），但不阻塞服务启动
+        print(f"⚠ defect_bboxes 列升级失败，热图功能将降级: {exc}")
+
+
+_ensure_welding_records_columns()
+
 app = FastAPI(
     title="焊育智眸 - 后端API",
     description="为AI焊接教学系统提供后端服务",

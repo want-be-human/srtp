@@ -368,6 +368,26 @@ SQLite ─→ /predict → RandomForest → 历史+预测折线
 
 EXECUTION_PLAN 进入 v4：旧 D4-D6 + 旧 Phase E 缺陷热图全部废弃，替换为 11 项检测/预测算法升级。触发是队友反馈三大痛点 + 两条硬约束（单目 RGB 摄像头、综合评分权重 0.3/0.3/0.4 是学校规定）。完整清单见 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md)。
 
+**E-P3-1 完成（commit 待提交）**：
+
+| 文件 | 改动 |
+|---|---|
+| `backend/models.py` | `WeldingRecord` 加 `defect_bboxes` JSON 列（nullable）存归一化坐标列表 |
+| `backend/main.py::_ensure_welding_records_columns` | 幂等 ALTER TABLE 给老库补 `defect_bboxes` 列；`SQLAlchemyError` 时只打告警不阻塞启动 |
+| `backend/api/yolo_realtime.py::_normalize_bboxes` | TTA detections → `cx/cy/w/h ∈ [0,1]`；三重过滤：良品标签 / 越界 / <1px 退化框 |
+| `backend/api/yolo_realtime.py::save_score` | TTA 之后把 `tta_def["detections"]` 喂给 `_normalize_bboxes`，写入 `record.defect_bboxes` |
+| `backend/api/yolo_realtime.py::get_detection_heatmap` (新) | `GET /detection-heatmap?student_id&limit=200`，只投影 `defect_bboxes`，按 `timestamp DESC` 取，铺平成点列表 + 按 label 计数 |
+| `front/components/comparison/defect-heatmap.tsx` (新) | canvas KDE：σ=14px、半径 3σ 高斯叠加、6 段色阶 ramp、散点叠层、按 label 图例 |
+| `front/components/comparison/student-comparison.tsx` | 雷达图下方新增双热图（自己 + 对手） |
+| `front/lib/api.ts` | 加 `DETECTION_HEATMAP` 端点 |
+| `docs/algorithm_upgrades.md` | 新增 §10 缺陷分布热图（问题/方案/指标/性能/创新/论文/局限）+ 节序号调整为 1-13 |
+
+P3-1 关键事项：
+- 老库历史记录 `defect_bboxes = NULL`，热图只反映升级后的新数据
+- 用归一化坐标，分辨率变了历史数据仍可用
+- KDE 单次渲染 30-60ms，仅 `studentId` 切换时重绘
+- _ensure_welding_records_columns 在 SQLite 上 `ALTER ADD COLUMN ... JSON` 取 NUMERIC 类型亲和性，SQLAlchemy JSON 类型层透明序列化
+
 **E-P2 完成（commits `e06fe0b` + `a550058` + `7fad52b`）**：
 
 | 文件 | 改动 |

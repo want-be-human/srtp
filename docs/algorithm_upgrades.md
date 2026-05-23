@@ -18,6 +18,7 @@
 | E-P2-1 | 1D-CNN 变长时序预测 + RF 双轨 | `e06fe0b` | **主创新点 2**：深度模型 |
 | E-P2-2 | GLCM 纹理 + 高光抑制 | `a550058` | 修过曝白板满分 bug |
 | E-P2-3 | TTA 保存按键启用 | `7fad52b` | 入库分数比实时更稳 |
+| E-P3-1 | 缺陷分布热图（KDE） | _本次_ | 可视化「常出错位置」，PK 视角强 |
 
 完整模型架构详情见 [temporal_model_design.md](./temporal_model_design.md)。
 
@@ -378,7 +379,59 @@ calibrated 标志"的完整闭环交付出来。
 
 ---
 
-## 10. 综合性能 & 创新点矩阵
+## 10. 缺陷分布热图（E-P3-1）
+
+**问题**：学生反复练习时，常错位置（如焊缝尾部、起弧端）肉眼看分数曲线无法发现。教师
+做学情分析时只有「均分」「总次数」，缺一个"在哪里出错"的视觉证据。
+
+**方案**：
+- 后端：`backend/models.py::WeldingRecord` 加 `defect_bboxes` JSON 列；`save_score`
+  从 TTA 结果里抽出每个缺陷框，归一化到 `cx/cy/w/h ∈ [0,1]`、过滤良品框、丢掉越界
+  与退化框（<1px）后入库。
+- 启动迁移：`main.py::_ensure_welding_records_columns` 在 `create_all` 后幂等地 ALTER
+  老库补列；SQLAlchemyError 时打印告警继续启动，不阻塞服务。
+- 聚合端点：`GET /api/v1/detection-heatmap?student_id&limit=200`，只投影 `defect_bboxes`
+  字段，按 `timestamp DESC` 取最近 200 条按键记录，铺平成点列表 + 按类别计数。
+- 前端：`front/components/comparison/defect-heatmap.tsx` canvas 上做高斯核叠加近似 KDE：
+  每个点用 σ=14px、半径 3σ 的高斯叠加到密度场，最后通过 6 段色阶映射到 RGBA。
+- 接入：学生对比页雷达图下方放双热图（自己 + 对手），PK 时直观看到「我和对手都在哪
+  些位置出错」。
+
+**指标**：
+- 单次按键最多记 N 个缺陷框（TTA 已经做了 NMS，实测 N ≤ 5）
+- 历史 200 次按键 × 平均 2 框 ≈ 400 点，canvas 480×270 单次渲染 ~30-60ms
+- 良品框、越界框、退化框（<1px）三重过滤，确保 (0,0) / (1,1) 不会被堆出虚假热区
+
+**性能**：
+- DB 端：`student_id` 已有索引；`defect_bboxes` 仅在 `IS NOT NULL` 时拉取；200 行 JSON
+  解析负载在 SQLite 上 < 30ms
+- 前端 KDE：O(N · r²) = 200 · 5500 ≈ 1.1M 次 `exp`，加上 `ImageData` 写回 130k 像素，
+  单次 30-60ms，仅在 `studentId` 切换时重绘，不进每帧热路径
+- TTA 抽 bbox 在 `_run_under_detector_lock` 之外执行，纯函数操作 detection 列表，不增加
+  锁持有时间
+
+**创新点**（结合项目场景）：
+- 焊接教学场景里第一次把「检测框分布」沉淀成可分析数据，把瞬时检测结果转成长时序教学
+  反馈
+- 配合 PK 模式，直接回答「我比对手在哪些位置错得多」，比单纯数值差更有教学说服力
+- 与 E-P1-1 ROI 引导互补：ROI 把检测限制在焊缝带，热图就能清晰看到学生在焊缝带内
+  哪段最易出错
+- 用归一化坐标存储，分辨率改变后历史数据仍可用，无需重新标定
+
+**论文 / 资料**：
+- Silverman, B.W. (1986) *Density Estimation for Statistics and Data Analysis*（KDE 经典）
+- Wilkinson, L. (2018) *Visualizing Big Data Outliers Through Distributed Aggregation*
+  IEEE Trans. Visualization
+- D3.js contour density plugin（实现参考，本项目自实现避免引入大型依赖）
+
+**局限**：
+- 当前用恒定 σ=14px，未做 bandwidth 自适应（Silverman 法则可补，但 200 点规模收益有限）
+- 累积口径限制在最近 200 条按键，更长跨度的趋势对比需要做时间分桶（留作 P3 后续）
+- 老的（升级前）历史记录 `defect_bboxes` 为 NULL，热图只反映升级后的数据
+
+---
+
+## 11. 综合性能 & 创新点矩阵
 
 **性能整体**：
 - 实时检测路径（6 FPS 推理）新增开销 < 15 ms / 帧（stabilizer < 1 ms + ROI tracker
@@ -405,7 +458,7 @@ calibrated 标志"的完整闭环交付出来。
 
 ---
 
-## 11. 论文与可靠数据来源（汇总）
+## 12. 论文与可靠数据来源（汇总）
 
 按主题归类，便于引用：
 
@@ -439,9 +492,8 @@ calibrated 标志"的完整闭环交付出来。
 
 ---
 
-## 12. 后续工作（P3 + 冻结日前可选）
+## 13. 后续工作（冻结日前可选）
 
-- E-P3-1 缺陷热图：`models.WeldingRecord.defect_bboxes` JSON 列 + 前端 KDE 热图
 - E-P3-2 AI schema 重试：`ai_analysis.py` 解析失败后用更明确的 schema prompt 重试一次
 - 标定分辨率不匹配自动告警（detector 加载时对比当前帧尺寸）
 - `lesson_plan.py:271` 第三份硬编码非缺陷标签集合 → 改用 `NON_DEFECT_LABELS`

@@ -35,8 +35,9 @@ from config import YOLO_CONFIG_FILE  # 配置文件路径，置信度阈值等
 
 # 导入统一的缺陷类型定义
 try:
-    from defect_types import DEFECT_EN_TO_CN, TRUE_DEFECT_TYPES
+    from defect_types import DEFECT_EN_TO_CN, TRUE_DEFECT_TYPES, NON_DEFECT_LABELS
 except ImportError:
+    NON_DEFECT_LABELS = frozenset({"Good Weld", "良好焊缝", "无缺陷", "无", "未知", ""})
     DEFECT_EN_TO_CN = {
         'Poor Weld': '焊接不良', 'Crack': '裂纹', 'Excess Rebar': '钢筋过剩',
         'Good Weld': '良好焊缝', 'Porosity': '气孔', 'Spatter': '飞溅',
@@ -218,6 +219,42 @@ class DetectionStabilizer:
 class StartDetectionRequest(BaseModel):
     camera_id: Optional[int] = None
     camera_url: Optional[str] = None  # IP摄像头URL，如 http://192.168.141.81:8081/
+
+
+def _normalize_bboxes(detections, img_w: int, img_h: int) -> List[dict]:
+    """xyxy 像素坐标 → cx/cy/w/h 归一化到 [0,1]，并丢掉良品框。"""
+    if img_w <= 0 or img_h <= 0:
+        return []
+    out = []
+    for d in detections or []:
+        box = d.get("box")
+        if not box or len(box) != 4:
+            continue
+        label_cn = str(d.get("class_name_cn") or "")
+        label_en = str(d.get("class_name") or "")
+        if label_cn in NON_DEFECT_LABELS or label_en in NON_DEFECT_LABELS:
+            continue
+        try:
+            x1, y1, x2, y2 = (float(v) for v in box)
+        except (TypeError, ValueError):
+            continue
+        # 越界 / 退化框直接丢，否则 clamp 后会堆到 (0,0) 或 (1,1) 污染热图
+        if x1 < 0 or y1 < 0 or x2 > img_w or y2 > img_h or x2 - x1 < 1 or y2 - y1 < 1:
+            continue
+        cx = (x1 + x2) * 0.5 / img_w
+        cy = (y1 + y2) * 0.5 / img_h
+        w = (x2 - x1) / img_w
+        h = (y2 - y1) / img_h
+        out.append({
+            "label": label_en or "unknown",
+            "label_cn": label_cn or label_en or "未知",
+            "cx": round(cx, 4),
+            "cy": round(cy, 4),
+            "w": round(w, 4),
+            "h": round(h, 4),
+            "conf": round(float(d.get("confidence", 0.0)), 3),
+        })
+    return out
 
 
 class ScoreData(BaseModel):
@@ -587,6 +624,9 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
             except (TypeError, ValueError):
                 return 0.0
 
+        # TTA 出来的缺陷框入库时记一份归一化坐标，给热图用
+        defect_bboxes_payload: Optional[List[dict]] = None
+
         # 保存前用 TTA 重新算一次，入库分数比实时显示更稳。
         # 关键：roi_tracker.process 没有内部锁，必须拿 detector_lock 不让 inference_loop
         # 同时跑同一个 tracker。整段 detector 调用一起进线程池，事件循环不阻塞。
@@ -614,6 +654,9 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
                         tta_def["detections"][0].get("class_name_cn")
                         or data.defect_type_name
                     )
+                    defect_bboxes_payload = _normalize_bboxes(
+                        tta_def["detections"], snap.shape[1], snap.shape[0]
+                    )
                 print(f"save-score 用 TTA 重算: {tta_def.get('debug_info', '')}")
             except Exception as exc:
                 # TTA 失败不阻断保存，沿用前端传来的瞬时分数
@@ -632,7 +675,8 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
             total_score=_clamp_score(data.total_score),
             actual_width=data.width_mm,
             defect_type_name=data.defect_type_name,
-            notes=data.notes
+            notes=data.notes,
+            defect_bboxes=defect_bboxes_payload,
         )
 
         db.add(db_record)
@@ -698,6 +742,61 @@ async def get_recent_scores(
             status_code=500,
             detail=f"获取分数记录失败: {str(e)}"
         )
+
+
+@router.get("/detection-heatmap")
+async def get_detection_heatmap(
+    student_id: str = Query(..., description="学号"),
+    limit: int = Query(200, ge=1, le=2000, description="拉最近多少条按键记录的 bbox"),
+    db: SessionLocal = Depends(get_db),
+):
+    """汇总学生历史按键记录里的归一化缺陷框，给前端画 KDE 热图用。"""
+    try:
+        rows = (
+            db.query(models.WeldingRecord.defect_bboxes)
+            .filter(
+                models.WeldingRecord.student_id == student_id,
+                models.WeldingRecord.defect_bboxes.isnot(None),
+            )
+            .order_by(models.WeldingRecord.timestamp.desc())
+            .limit(limit)
+            .all()
+        )
+
+        points: List[dict] = []
+        by_label: dict = {}
+        for (boxes,) in rows:
+            if not isinstance(boxes, list):
+                continue
+            for b in boxes:
+                if not isinstance(b, dict):
+                    continue
+                try:
+                    cx, cy = float(b["cx"]), float(b["cy"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                label = str(b.get("label_cn") or b.get("label") or "未知")
+                points.append({
+                    "cx": cx,
+                    "cy": cy,
+                    "w": float(b.get("w", 0.0)),
+                    "h": float(b.get("h", 0.0)),
+                    "label": label,
+                    "conf": float(b.get("conf", 0.0)),
+                })
+                by_label[label] = by_label.get(label, 0) + 1
+
+        return {
+            "status": "success",
+            "student_id": student_id,
+            "record_count": len(rows),
+            "point_count": len(points),
+            "points": points,
+            "by_label": by_label,
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"获取热图数据失败: {str(e)}")
 
 
 @router.get("/student-comparison")
