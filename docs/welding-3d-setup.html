@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<title>焊缝 3D 高斯泼溅建模 · 水平环形导轨</title>
+<style>
+  html, body { margin: 0; padding: 0; height: 100%; background: #0b1220; color: #cbd5e1;
+               font: 13px/1.5 -apple-system,Segoe UI,Microsoft Yahei,sans-serif; overflow: hidden; }
+  #canvas-wrap { position: fixed; inset: 0; }
+  #panel {
+    position: fixed; top: 16px; left: 16px; max-width: 380px;
+    background: rgba(15,23,42,0.85); border: 1px solid #334155; border-radius: 8px;
+    padding: 14px 16px; backdrop-filter: blur(6px);
+  }
+  #panel h1 { margin: 0 0 8px; font-size: 15px; color: #f1f5f9; }
+  #panel p  { margin: 4px 0; font-size: 12px; }
+  #panel .key { color: #fde68a; }
+  #panel .num { color: #93c5fd; font-variant-numeric: tabular-nums; }
+  #legend {
+    position: fixed; top: 16px; right: 16px;
+    background: rgba(15,23,42,0.85); border: 1px solid #334155; border-radius: 8px;
+    padding: 10px 14px;
+  }
+  #legend .row { display: flex; align-items: center; gap: 8px; padding: 2px 0; font-size: 12px; }
+  #legend .sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; border: 1px solid #475569; }
+  #controls {
+    position: fixed; bottom: 16px; left: 16px;
+    background: rgba(15,23,42,0.85); border: 1px solid #334155; border-radius: 8px;
+    padding: 10px 14px;
+  }
+  #controls label { display: block; font-size: 12px; margin: 4px 0; }
+  #controls input[type=range] { width: 240px; vertical-align: middle; }
+  #controls .val { color: #93c5fd; font-variant-numeric: tabular-nums; }
+  .hint { position: fixed; bottom: 16px; right: 16px; font-size: 11px; color: #64748b; }
+</style>
+</head>
+<body>
+<div id="canvas-wrap"></div>
+
+<div id="panel">
+  <h1>水平环形导轨 · 3D 高斯泼溅 (3DGS) 焊缝建模</h1>
+  <p><span class="key">方案：</span>建模相机挂在水平圆环导轨的滑块下方，沿环绕焊缝走一圈拍 <span class="num">100</span> 张俯角图。<b>单台相机 + 360° 视点覆盖</b>，比双侧弧方案少一台相机，又能拍到焊缝顶部和各侧。</p>
+  <p><span class="key">高度错位避让：</span>平面检测相机在 <span class="num">Y=280mm</span> 焊缝正上方俯视；环在 <span class="num">Y=170mm</span> 水平面。两者高度差 <span class="num">110mm</span>。平面相机的视线**从环的中心空洞穿过去**，不被环挡。</p>
+  <p><span class="key">几何参数：</span><br>
+    • 环半径 <span class="num">R = 115mm</span>，相机到焊缝 <span class="num">≈ 190mm</span><br>
+    • 相机俯角 <span class="num">≈ 53°</span>，斜射焊缝顶面 + 侧面<br>
+    • 沿环每 <span class="num">3.6°</span> 一帧，一圈 <span class="num">100 张</span><br>
+    • 环周长 723mm 分 <span class="num">4 段</span>，单段 ≤ 180mm 桌面打印机出</p>
+  <p><span class="key">3DGS 优势：</span>视点空间是 1D 圆环（不是 1D 弧），方位角覆盖完整 360°。SfM 拿到 100 张闭环图，环路 loop closure 约束让位姿解算特别稳。3DGS 训练后焊缝任意角度都能渲染。</p>
+  <p><span class="key">硬件特性确认：</span>MF500 卷帘快门 + 30fps + USB 2.0 <b>完全够 3DGS</b>。卷帘只影响动态拍摄，环上每个位置停 ≥100ms 拍单张即可。真正要锁的是自动对焦（不然焦距漂移→内参变化→SfM 失败）。</p>
+</div>
+
+<div id="legend">
+  <div class="row"><span class="sw" style="background:#7d8a99"></span>焊板</div>
+  <div class="row"><span class="sw" style="background:#aa4040"></span>焊缝</div>
+  <div class="row"><span class="sw" style="background:#fbbf24"></span>建模相机 (沿环移动)</div>
+  <div class="row"><span class="sw" style="background:#a78bfa"></span>平面检测相机 (正上方固定)</div>
+  <div class="row"><span class="sw" style="background:#f5d8b6"></span>3D 打印环形导轨</div>
+  <div class="row"><span class="sw" style="background:rgba(96,165,250,0.35)"></span>建模视野</div>
+  <div class="row"><span class="sw" style="background:rgba(167,139,250,0.35)"></span>平面视野</div>
+  <div class="row"><span class="sw" style="background:#f8fafc"></span>柔光罩 / LED 漫反射</div>
+</div>
+
+<div id="controls">
+  <label>环上相机方位角 φ：<input id="phi" type="range" min="0" max="359" step="1" value="45"/> <span id="phi-val" class="val">45</span>° <span style="color:#64748b">(绕焊缝旋转)</span></label>
+  <label><input id="toggle-fov" type="checkbox" checked /> 显示视野棱锥</label>
+  <label><input id="toggle-ring" type="checkbox" checked /> 显示环形导轨</label>
+  <label><input id="toggle-light" type="checkbox" checked /> 显示柔光罩</label>
+  <label><input id="toggle-grid" type="checkbox" checked /> 显示桌面网格</label>
+  <label><input id="auto-rotate" type="checkbox" /> 自动旋转（模拟扫描过程）</label>
+</div>
+
+<div class="hint">鼠标左键拖拽：旋转 · 滚轮：缩放 · 右键拖拽：平移</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const wrap = document.getElementById('canvas-wrap');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b1220);
+
+const viewCam = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 5000);
+viewCam.position.set(380, 280, 360);
+viewCam.lookAt(0, 80, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+wrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(viewCam, renderer.domElement);
+controls.target.set(0, 80, 0);
+controls.enableDamping = true;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const keyLight = new THREE.DirectionalLight(0xffffff, 0.85);
+keyLight.position.set(300, 500, 200);
+scene.add(keyLight);
+const fillLight = new THREE.DirectionalLight(0xa0c4ff, 0.35);
+fillLight.position.set(-300, 200, -200);
+scene.add(fillLight);
+
+const tableSize = 700;
+const gridHelper = new THREE.GridHelper(tableSize, 35, 0x334155, 0x1e293b);
+scene.add(gridHelper);
+
+const axes = new THREE.AxesHelper(80);
+axes.position.set(-tableSize / 2 + 20, 0.5, -tableSize / 2 + 20);
+scene.add(axes);
+
+// ---- 焊板 + 焊缝 ----
+const PLATE = { w: 200, h: 5, d: 100 };
+const plate = new THREE.Mesh(
+  new THREE.BoxGeometry(PLATE.w, PLATE.h, PLATE.d),
+  new THREE.MeshStandardMaterial({ color: 0x7d8a99, metalness: 0.6, roughness: 0.5 })
+);
+plate.position.set(0, PLATE.h / 2, 0);
+scene.add(plate);
+
+const SEAM = { w: 120, h: 1.6, d: 5 };
+const seamGeom = new THREE.BoxGeometry(SEAM.w, SEAM.h, SEAM.d, 60, 1, 1);
+const pos = seamGeom.attributes.position;
+for (let i = 0; i < pos.count; i++) {
+  if (pos.getY(i) > 0) {
+    const x = pos.getX(i);
+    const bump = 0.4 * Math.sin(x * 0.4) + 0.2 * Math.sin(x * 1.1 + 1.3);
+    pos.setY(i, pos.getY(i) + bump);
+  }
+}
+seamGeom.computeVertexNormals();
+const seam = new THREE.Mesh(
+  seamGeom,
+  new THREE.MeshStandardMaterial({ color: 0xaa4040, metalness: 0.4, roughness: 0.7 })
+);
+seam.position.set(0, PLATE.h + SEAM.h / 2, 0);
+scene.add(seam);
+
+const SEAM_CENTER = new THREE.Vector3(0, PLATE.h + SEAM.h, 0);
+
+// ---- 水平环形导轨 ----
+const RING_R = 115;
+const RING_Y = 170;
+const RING_SEGMENTS = 4;        // 3D 打印分段
+const RING_TUBE = 7;            // torus 截面半径
+const printMat = new THREE.MeshStandardMaterial({ color: 0xf5d8b6, metalness: 0.05, roughness: 0.8 });
+const printDarkMat = new THREE.MeshStandardMaterial({ color: 0xc7a87a, metalness: 0.05, roughness: 0.8 });
+
+const ringGroup = new THREE.Group();
+scene.add(ringGroup);
+
+for (let s = 0; s < RING_SEGMENTS; s++) {
+  const arc = (2 * Math.PI) / RING_SEGMENTS;
+  const seg = new THREE.Mesh(
+    new THREE.TorusGeometry(RING_R, RING_TUBE, 10, 32, arc * 0.98),
+    s % 2 === 0 ? printMat : printDarkMat
+  );
+  // torus 默认在 XY 平面（绕 Z 轴），旋转 -90°(X) 把它放到 XZ 水平面
+  const wrap2 = new THREE.Group();
+  wrap2.rotation.x = -Math.PI / 2;
+  seg.rotation.z = s * arc;
+  wrap2.add(seg);
+  wrap2.position.y = RING_Y;
+  ringGroup.add(wrap2);
+}
+
+// 环的四根立柱支撑（在 4 等分方位角的环上点垂直落到桌面）
+const SUPPORT_R = RING_R + 12; // 立柱稍微在环外，避免和滑块冲突
+for (let k = 0; k < 4; k++) {
+  const a = k * Math.PI / 2 + Math.PI / 4; // 45° 错开方位避开滑块经过
+  const px = SUPPORT_R * Math.cos(a);
+  const pz = SUPPORT_R * Math.sin(a);
+  const pillar = new THREE.Mesh(
+    new THREE.BoxGeometry(14, RING_Y, 14),
+    printMat
+  );
+  pillar.position.set(px, RING_Y / 2, pz);
+  ringGroup.add(pillar);
+  // 立柱顶部短臂连到环上
+  const arm = new THREE.Mesh(
+    new THREE.BoxGeometry(20, 8, 8),
+    printDarkMat
+  );
+  arm.position.set(px * 0.95, RING_Y - 4, pz * 0.95);
+  arm.lookAt(0, RING_Y - 4, 0);
+  ringGroup.add(arm);
+  // 底座
+  const foot = new THREE.Mesh(
+    new THREE.BoxGeometry(35, 6, 35),
+    printDarkMat
+  );
+  foot.position.set(px, 3, pz);
+  ringGroup.add(foot);
+}
+
+// ---- 建模相机：滑块 + 相机本体分两个 group，独立定位 ----
+// 滑块跨在环上方（水平，不旋转），相机吊在滑块下方（lookAt seam，会斜）
+const modelSlider = new THREE.Mesh(
+  new THREE.BoxGeometry(45, 18, 32),
+  new THREE.MeshStandardMaterial({ color: 0xfbbf24, metalness: 0.4, roughness: 0.5 })
+);
+scene.add(modelSlider);
+
+const modelCamGroup = new THREE.Group();
+scene.add(modelCamGroup);
+
+const modelCamBody = new THREE.Mesh(
+  new THREE.BoxGeometry(30, 30, 38),
+  new THREE.MeshStandardMaterial({ color: 0x1f2937, metalness: 0.4, roughness: 0.5 })
+);
+modelCamGroup.add(modelCamBody);
+
+const modelCamLens = new THREE.Mesh(
+  new THREE.CylinderGeometry(8, 8, 16, 24),
+  new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.85, roughness: 0.2 })
+);
+modelCamLens.rotation.x = Math.PI / 2;
+modelCamLens.position.set(0, 0, -27);
+modelCamGroup.add(modelCamLens);
+
+// 视野棱锥沿 -Z
+function buildFovTowardsMinusZ(opts) {
+  const { fovDeg, aspect, near, far, color, opacity } = opts;
+  const nh = 2 * near * Math.tan(THREE.MathUtils.degToRad(fovDeg / 2));
+  const nw = nh * aspect;
+  const fh = 2 * far * Math.tan(THREE.MathUtils.degToRad(fovDeg / 2));
+  const fw = fh * aspect;
+  const v = [
+    -nw/2,-nh/2,-near,  nw/2,-nh/2,-near,  nw/2,nh/2,-near,  -nw/2,nh/2,-near,
+    -fw/2,-fh/2,-far,   fw/2,-fh/2,-far,   fw/2,fh/2,-far,   -fw/2,fh/2,-far,
+  ];
+  const idx = [
+    0,1,2, 0,2,3,
+    4,6,5, 4,7,6,
+    0,4,5, 0,5,1,
+    1,5,6, 1,6,2,
+    2,6,7, 2,7,3,
+    3,7,4, 3,4,0,
+  ];
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return new THREE.Mesh(g, new THREE.MeshStandardMaterial({
+    color, transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false
+  }));
+}
+
+const modelFov = buildFovTowardsMinusZ({
+  fovDeg: 35, aspect: 4/3, near: 30, far: 220, color: 0x60a5fa, opacity: 0.18
+});
+modelFov.position.set(0, 0, -28);
+modelCamGroup.add(modelFov);
+
+// 连接臂：从滑块下方伸到相机本体
+const connector = new THREE.Mesh(
+  new THREE.CylinderGeometry(3, 3, 30, 12),
+  printDarkMat
+);
+scene.add(connector);
+
+function placeRingCam(phiDeg) {
+  const phi = THREE.MathUtils.degToRad(phiDeg);
+  const x = RING_R * Math.cos(phi);
+  const z = RING_R * Math.sin(phi);
+
+  // 滑块在环上方 (RING_Y + 几mm)，长轴沿环切线（绕 Y 轴旋转）
+  modelSlider.position.set(x, RING_Y + 8, z);
+  modelSlider.rotation.y = -phi + Math.PI / 2;
+
+  // 相机本体在滑块下方一段距离，斜射 seam
+  const camPos = new THREE.Vector3(x, RING_Y - 30, z);
+  modelCamGroup.position.copy(camPos);
+  modelCamGroup.lookAt(SEAM_CENTER);
+
+  // 连接臂从滑块到相机本体中点
+  const midPoint = new THREE.Vector3(x, RING_Y - 11, z);
+  connector.position.copy(midPoint);
+  // 连接臂方向：从滑块 (x, RING_Y+8, z) 指向相机 (x, RING_Y-30, z)，即垂直向下
+  connector.rotation.set(0, 0, 0);
+}
+
+// ---- 平面检测相机 ----
+const PLANAR_CAM_Y = 280;
+
+// 静态支撑（不旋转）
+const planarPillar = new THREE.Mesh(
+  new THREE.BoxGeometry(12, PLANAR_CAM_Y, 12),
+  new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.7, roughness: 0.4 })
+);
+planarPillar.position.set(0, PLANAR_CAM_Y / 2, -PLATE.d / 2 - 120);
+scene.add(planarPillar);
+
+const planarArm = new THREE.Mesh(
+  new THREE.BoxGeometry(12, 12, 130),
+  new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.7, roughness: 0.4 })
+);
+planarArm.position.set(0, PLANAR_CAM_Y, -PLATE.d / 2 - 55);
+scene.add(planarArm);
+
+// 相机本体（lookAt 旋转）
+const planarCamGroup = new THREE.Group();
+planarCamGroup.position.set(0, PLANAR_CAM_Y, 0);
+scene.add(planarCamGroup);
+
+const planarBody = new THREE.Mesh(
+  new THREE.BoxGeometry(36, 32, 42),
+  new THREE.MeshStandardMaterial({ color: 0x312e81, metalness: 0.4, roughness: 0.5 })
+);
+planarCamGroup.add(planarBody);
+
+const planarLens = new THREE.Mesh(
+  new THREE.CylinderGeometry(10, 10, 18, 24),
+  new THREE.MeshStandardMaterial({ color: 0x0f172a, metalness: 0.85, roughness: 0.2 })
+);
+planarLens.rotation.x = Math.PI / 2;
+planarLens.position.set(0, 0, -29);
+planarCamGroup.add(planarLens);
+
+// 平面相机视野：从 (0,280,0) 朝 (0,6.6,0)，far 设到能穿过环但不长过焊板
+const planarFov = buildFovTowardsMinusZ({
+  fovDeg: 45, aspect: 16/9, near: 40, far: PLANAR_CAM_Y - 10, color: 0xa78bfa, opacity: 0.16
+});
+planarFov.position.set(0, 0, -25);
+planarCamGroup.add(planarFov);
+
+planarCamGroup.lookAt(SEAM_CENTER);
+
+// ---- 柔光罩（-X 侧，不和环抢空间）----
+const lightTent = new THREE.Group();
+scene.add(lightTent);
+const tentPanel = new THREE.Mesh(
+  new THREE.PlaneGeometry(220, 160),
+  new THREE.MeshStandardMaterial({
+    color: 0xf8fafc, emissive: 0xffffff, emissiveIntensity: 0.4,
+    transparent: true, opacity: 0.7, side: THREE.DoubleSide, roughness: 0.9
+  })
+);
+tentPanel.position.set(-280, 130, 0);
+tentPanel.lookAt(SEAM_CENTER);
+lightTent.add(tentPanel);
+const tentLeg = new THREE.Mesh(
+  new THREE.BoxGeometry(8, 250, 8),
+  new THREE.MeshStandardMaterial({ color: 0x475569, metalness: 0.6, roughness: 0.5 })
+);
+tentLeg.position.set(-300, 125, 0);
+lightTent.add(tentLeg);
+const tentLightSource = new THREE.PointLight(0xfff5e8, 0.6, 600);
+tentLightSource.position.set(-260, 130, 0);
+scene.add(tentLightSource);
+
+// ---- 距离辅助虚线（相机→焊缝）----
+const distLineMat = new THREE.LineDashedMaterial({
+  color: 0x60a5fa, dashSize: 6, gapSize: 4, transparent: true, opacity: 0.6
+});
+const distLineGeom = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+const distLine = new THREE.Line(distLineGeom, distLineMat);
+scene.add(distLine);
+
+function updateDistLine() {
+  const pts = [modelCamGroup.position.clone(), SEAM_CENTER.clone()];
+  distLine.geometry.setFromPoints(pts);
+  distLine.computeLineDistances();
+}
+
+// ---- 控制 ----
+const phiInput = document.getElementById('phi');
+const phiLabel = document.getElementById('phi-val');
+function applyPhi(deg) {
+  placeRingCam(deg);
+  updateDistLine();
+  phiLabel.textContent = deg.toFixed(0);
+}
+phiInput.addEventListener('input', () => applyPhi(parseFloat(phiInput.value)));
+applyPhi(parseFloat(phiInput.value));
+
+document.getElementById('toggle-fov').addEventListener('change', e => {
+  modelFov.visible = e.target.checked;
+  planarFov.visible = e.target.checked;
+});
+document.getElementById('toggle-ring').addEventListener('change', e => {
+  ringGroup.visible = e.target.checked;
+});
+document.getElementById('toggle-light').addEventListener('change', e => {
+  lightTent.visible = e.target.checked;
+  tentLightSource.visible = e.target.checked;
+});
+document.getElementById('toggle-grid').addEventListener('change', e => gridHelper.visible = e.target.checked);
+
+// 自动旋转模拟扫描
+const autoRotateCheckbox = document.getElementById('auto-rotate');
+let lastFrameTime = performance.now();
+function tick() {
+  requestAnimationFrame(tick);
+  const now = performance.now();
+  const dt = (now - lastFrameTime) / 1000;
+  lastFrameTime = now;
+  if (autoRotateCheckbox.checked) {
+    let next = parseFloat(phiInput.value) + dt * 40; // 40°/秒
+    if (next >= 360) next -= 360;
+    phiInput.value = next;
+    applyPhi(next);
+  }
+  controls.update();
+  renderer.render(scene, viewCam);
+}
+
+function onResize() {
+  viewCam.aspect = window.innerWidth / window.innerHeight;
+  viewCam.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+}
+window.addEventListener('resize', onResize);
+
+tick();
+</script>
+</body>
+</html>
