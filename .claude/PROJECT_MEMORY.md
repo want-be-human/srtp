@@ -368,6 +368,27 @@ SQLite ─→ /predict → RandomForest → 历史+预测折线
 
 EXECUTION_PLAN 进入 v4：旧 D4-D6 + 旧 Phase E 缺陷热图全部废弃，替换为 11 项检测/预测算法升级。触发是队友反馈三大痛点 + 两条硬约束（单目 RGB 摄像头、综合评分权重 0.3/0.3/0.4 是学校规定）。完整清单见 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md)。
 
+**E-P2 完成（commits `e06fe0b` + `a550058` + `7fad52b`）**：
+
+| 文件 | 改动 |
+|---|---|
+| `backend/services/prediction/temporal_model.py` (新建) | `WeldTemporalCNN`：3 层 1D-CNN + `AdaptiveAvgPool1d(1)` + fc，参数 ~1349（5.3 KB）。卷积带 `padding=1` 不改时间维长度，所以任意 ≥ 5 行的输入都能跑。训练分桶 `TRAIN_WINDOWS=(10,15,20,25,30)`，每 epoch 各桶过一遍。`get_or_train` 单例 + threading.Lock 缓存，新增 ≥30 条记录才重训。详见 [temporal_model_design.md](../docs/temporal_model_design.md) |
+| `backend/prediction.py::predict_with_temporal_model` | RF 同构 wrapper：DataFrame → list[dict]，调 `temporal_model.get_or_train + forecast`，样本不足/训练失败透明回退 RF |
+| `backend/api/predict.py::get_prediction` | 加 `mode=fast\|deep` 查询参数，缓存键改 `(student_id, mode)` 元组让两路独立缓存 |
+| `front/components/prediction/prediction-dashboard.tsx` | 加快速预测 / 深度预测 `ToggleGroup`；localStorage 缓存键带 `:deep` 后缀避免串数据 |
+| `backend/services/yolo/guanghuadu_jiance_qiqi.py` | `_glcm_contrast` (`np.bincount` 实现，3.5× 加速)、`_local_variance_mean` (`cv2.boxFilter`)；`_analyze_brightness` 先调 `weld_roi.suppress_highlight` 再分析；新公式 `0.4·适中亮度 + 0.4·(1-GLCM/20) + 0.2·(1-方差/200)`；删失效的 `white/gray/black_weight`，换 `brightness/smoothness/uniformity` 三键 |
+| `backend/services/yolo/weld_roi.py` | `_suppress_highlight` → `suppress_highlight` 公开化让 guanghuadu 复用 |
+| `backend/services/yolo/zonghe_*.py` | `detect_defects(use_tta=False)` 把 `augment=use_tta` 透传给 ultralytics；`detect_defects_with_tta` 收成一行 wrapper（删 90 行手写 TTA + cv2.dnn.NMSBoxes）；抽 `_apply_defect_score(current, cls)` 消除两处扣分重复 |
+| `backend/api/yolo_realtime.py::save_score` | TTA 重算 4 项分数 override 前端瞬时值；整段包在 `detector_lock` 里防止与 `inference_loop` 抢 ROI 状态；`asyncio.to_thread` 不阻塞事件循环；失败静默回退原值 |
+| `docs/algorithm_upgrades.md` (新建) | P0-P2 9 项升级的总览技术文档：问题/方案/指标/性能/创新/论文/局限 |
+| `docs/temporal_model_design.md` | E-P2-1 模型架构专文（已在 P2-1 commit 中加） |
+
+P2 关键指标：
+- 1D-CNN：1349 参数 / 5.3 KB；CPU 80 epoch 3-5s 训完；推理 < 10ms；变长 5..30 行输入同一份权重
+- GLCM 公式：过曝白板 score 从 100→60（bug 修），平滑 98 / 粗糙 77 / 欠曝 60
+- TTA：YOLO 调用从手写 4 路减到 ultralytics 内置 1 路，~700-1200ms / 保存
+- 整体实时路径开销 < 15 ms / 帧
+
 **E-P1 完成（commit `f22461a`）**：
 
 | 文件 | 改动 |
