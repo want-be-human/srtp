@@ -15,7 +15,7 @@
   "optimization": {
     "enable_cache": true,
     "max_cache_size": 10,
-    "yolo_imgsz": 480,
+    "yolo_imgsz": 1280,
     "cv2_threads": 4
   },
   "display": {

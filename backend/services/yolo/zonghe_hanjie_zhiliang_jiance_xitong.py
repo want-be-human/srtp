@@ -271,10 +271,14 @@ class IntegratedWeldDetector:
             # ROI 引导：HSV 抑制 + ROI 外像素衰减后再送 YOLO
             yolo_input = self.roi_tracker.process(frame)
 
+            # 默认 1280 而不是 ultralytics 内置 640：焊缝小缺陷（裂纹/气孔）letterbox 后
+            # 输入像素多 4×；4060 单帧 < 50ms，远低于 INFERENCE_FPS=6 的 166ms 预算
+            imgsz = self.config.get("optimization", {}).get("yolo_imgsz", 1280)
             results = self.yolo_model(
                 yolo_input,
                 conf=self.config["confidence_threshold"],
                 iou=self.config["iou_threshold"],
+                imgsz=imgsz,
                 device=self.device,
                 verbose=False,
                 augment=use_tta,
