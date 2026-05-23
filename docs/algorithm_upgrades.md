@@ -18,7 +18,9 @@
 | E-P2-1 | 1D-CNN 变长时序预测 + RF 双轨 | `e06fe0b` | **主创新点 2**：深度模型 |
 | E-P2-2 | GLCM 纹理 + 高光抑制 | `a550058` | 修过曝白板满分 bug |
 | E-P2-3 | TTA 保存按键启用 | `7fad52b` | 入库分数比实时更稳 |
-| E-P3-1 | 缺陷分布热图（KDE） | _本次_ | 可视化「常出错位置」，PK 视角强 |
+| E-P3-1 | 缺陷分布热图（KDE） | `5b560f8` | 可视化「常出错位置」，PK 视角强 |
+| E-P3-2 | 平面检测管线 MSMF/2K源/1080p输出 + FpsMeter 仪表 | `6cf53fb` | 实时流从 2fps 上到 30fps，画质追上 Win 相机 |
+| E-P3-3 | YOLO 推理 imgsz 配置实际生效，默认 1280 | `7da97f1` | 小缺陷召回更高，配置驱动便于以后切高 imgsz |
 
 完整模型架构详情见 [temporal_model_design.md](./temporal_model_design.md)。
 
@@ -494,9 +496,90 @@ calibrated 标志"的完整闭环交付出来。
 
 ## 13. 后续工作（冻结日前可选）
 
-- E-P3-2 AI schema 重试：`ai_analysis.py` 解析失败后用更明确的 schema prompt 重试一次
+- AI schema 重试：`ai_analysis.py` 解析失败后用更明确的 schema prompt 重试一次
 - 标定分辨率不匹配自动告警（detector 加载时对比当前帧尺寸）
 - `lesson_plan.py:271` 第三份硬编码非缺陷标签集合 → 改用 `NON_DEFECT_LABELS`
 - `student-comparison.tsx` 还用老的派生公式拼 6 维 → 消费后端真实雷达数据
+- 用 2K 数据集重训 best.pt（imgsz=1280），让 §15 推理 imgsz 的潜力真正发挥（当前仍受
+  训练 imgsz 限制）
+- 焊缝 3D 高斯泼溅建模管线第二步（3DGS 训练 + 前端 .splat 渲染），硬件方案见
+  [welding-3d-setup.html](./welding-3d-setup.html)，第一步拍图工具见
+  `backend/scripts/capture_for_gsplat.py`
 
 到冻结日 2026-05-28 还有 5 天，P3 视余力。
+
+---
+
+## 14. 平面检测管线 MSMF / 2K 源 / 1080p 输出 + FpsMeter 仪表（E-P3-2）
+
+**问题**：平面检测视频流帧率远低于 30fps（实测 capture 2 fps，stream 0.1 fps），画质远不如 Windows "相机" 应用直接打开同一摄像头。技彩 MF500 (2560×1440 / USB 2.0) 接进来后整套管线烂在一起，靠肉眼看不出根因在哪一层。
+
+**根因**（多层叠加，靠 FpsMeter 仪表化才能分离）：
+1. `cv2.VideoCapture` 默认走 DSHOW 后端 → `set(CAP_PROP_FOURCC, MJPG)` 经常 silently fail → 相机回退未压缩 YUYV → 2560×1440 单帧 7.4MB 在 USB 2.0 上传不动 → capture **跌到 2 fps**
+2. 历史 `capture_loop` 强制相机源 640×360，丢失高分辨率优势
+3. 帧采集后中心 1/3 数字变焦（裁 + 放大），**8/9 像素信息丢掉**
+4. STREAM JPEG 编码 2K q=85 单线程 ~75ms/帧，跑不到 30fps
+
+**方案**：`backend/api/yolo_realtime.py`
+- USB 相机后端 DSHOW → MSMF（Windows Media Foundation），自动协商 MJPG；DSHOW 仅作 fallback
+- 请求源分辨率 2560×1440；YOLO 拿到 2K 原图后内部 letterbox（见 §15）
+- 删中心 1/3 数字变焦（2K 源不需要补救）
+- video_stream 默认输出 1920×1080；想看 2K 流前端加 `?width=2560&height=1440`
+- 新 `FpsMeter` 类：capture_loop + generate_video_stream 各自 5s 窗口的"请求 fps vs 实测 fps vs 单帧 work 耗时"打到控制台，divide-by-zero 守卫统一在 `max(1, count)`
+
+**指标**（MF500 / USB 2.0 / RTX 4060 Laptop）：
+| 阶段 | 改前 | 改后 |
+|---|---|---|
+| capture 实测 fps | 2.0 | **30.0** |
+| capture read+解码 | 495 ms/帧 | 28.8 ms/帧 |
+| stream 实测 fps | 0.1 | **12.5**（受前端节流，编码端 ~23 fps） |
+| stream JPEG 编码 | 75 ms/帧 (2K q=85) | 42 ms/帧 (1080p q=85) |
+| 画质 | 1/9 像素重采样 | 接近源 2K，前端 1080p 显示 |
+| 启动延迟 | DSHOW ~0.5s | MSMF ~1.5-2s |
+
+**性能**：USB 2.0 理论 480Mbps、实际可用 ~300Mbps；2K MJPG @ 30fps ≈ 360-540Mbps，相机端会自动 clamp 到 ~30fps，已饱和。
+
+**创新点**：FpsMeter 仪表把"帧率低"这种模糊问题量化分离到具体阶段（USB / 后端 read / JPEG 编码 / 前端拉流）。以前定位靠猜，现在 5s 一行 log 直接看瓶颈数字。配合 fourcc 实际值打印（虽然 MSMF 后端不暴露 fourcc，但从 capture fps 反推就能确认 MJPG 协商成功），调试闭环。
+
+**论文与可靠数据来源**：
+- Microsoft Media Foundation Programming Guide（DirectShow 已被官方标记 deprecated）
+- USB Implementers Forum, USB 2.0 Specification §5.3（Bulk transfer 带宽）
+- OpenCV `videoio` 后端能力对比（official wiki）
+
+**局限**：
+- USB 2.0 带宽是物理上限，2K @ 30fps 已接近天花板；想再提帧率只能换 USB 3.0 接口的工业相机或降分辨率
+- MSMF 启动比 DSHOW 慢 1-2 秒（用户已可接受）
+- MSMF 后端 OpenCV API 不暴露 fourcc 字符串，触发了一个 cosmetic WARN 误报（fourcc 返回 `\x00\x00\x00\x00` 4 个 null 字符，落到非空字符串 truthy 路径），从 fps 反推 MJPG 已生效，无功能影响
+
+---
+
+## 15. YOLO 推理 imgsz 配置实际生效 + 默认提到 1280（E-P3-3）
+
+**问题**：`yolo_config.json` 里有 `optimization.yolo_imgsz=480` 但 `IntegratedWeldDetector.detect_defects` 调用 ultralytics 时**没传 imgsz** —— 配置形同虚设，模型一直走 ultralytics 默认 640。焊缝小缺陷（裂纹、气孔）在 640×640 letterbox 里仅占几十像素，召回率天花板被锁死。
+
+**方案**：
+- `detect_defects` 调用增加 `imgsz=self.config.get("optimization", {}).get("yolo_imgsz", 1280)`，配置生效
+- `yolo_config.json` 默认值 480 → 1280（比 ultralytics 默认 640 高一档）
+
+**指标**（RTX 4060 Laptop，YOLOv8n 量级模型）：
+| imgsz | 推理时间 | 小目标可见性 | INFERENCE_FPS=6 余量 |
+|---|---|---|---|
+| 480（旧配置，实际未生效） | ~6 ms | 极差 | 充裕 |
+| 640（实际旧值） | ~8 ms | 中 | 充裕 |
+| **1280（新默认）** | **~25 ms** | **好** | **5× headroom** |
+| 1920（备选） | ~55 ms | 极好（理论） | 3× headroom |
+
+INFERENCE_FPS=6 预算 166 ms/帧，1280 还能继续提到 1920 不影响推理频率。
+
+**性能**：letterbox 后焊缝小缺陷在 YOLO 输入里像素数 4× 增加（imgsz=1280 vs 640），召回率提升预计 1-3% mAP（受限于 best.pt 训练时的 imgsz，多半 640）。
+
+**创新点**：暴露配置驱动的 imgsz，让推理分辨率与训练分辨率解耦。等以后用 2K 数据集重训 best.pt 时，前端代码无须改动，调一行 config 就能切到 1920 推理。
+
+**论文与可靠数据来源**：
+- Ultralytics YOLOv8 Inference Arguments（imgsz 文档）
+- Bochkovskiy et al., YOLOv4, arxiv:2004.10934, §4.2（letterbox 与 input size 对小目标 mAP 的影响）
+
+**局限**：
+- imgsz 推理时调高的边际收益受限于训练 imgsz；真要榨干 2K 相机潜力需用 2K 数据集重训 best.pt
+- imgsz 必须是 32 的倍数，否则 ultralytics 自动 round
+- 当前没做"推理时 imgsz 改变前后 mAP 对比"的离线评测，1-3% 是基于 ultralytics 文档与社区经验估算
