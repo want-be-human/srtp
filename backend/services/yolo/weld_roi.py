@@ -23,7 +23,7 @@ _MIN_PIXELS_FOR_PCA = 5
 _SEAM_KERNEL = cv2.getStructuringElement(cv2.MORPH_RECT, SEAM_MORPH_KERNEL)
 
 
-def _suppress_highlight(bgr):
+def suppress_highlight(bgr):
     hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
     hsv[:, :, 2] = np.minimum(hsv[:, :, 2], HIGHLIGHT_V_CLIP)
     return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
@@ -91,7 +91,7 @@ class WeldRoiTracker:
 
     def process(self, bgr):
         """返回送给 YOLO 的图像，同时把 bbox / mask / theta 缓存到 self 上。"""
-        suppressed = _suppress_highlight(bgr)
+        suppressed = suppress_highlight(bgr)
 
         h, w = suppressed.shape[:2]
         if self.last_bbox is None:
