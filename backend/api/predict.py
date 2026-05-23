@@ -173,9 +173,17 @@ class YOLODetectionData(BaseModel):
 @router.get("/predict", response_model=PredictionResponse)
 async def get_prediction(
     student_id: Optional[str] = None,
+    mode: str = "fast",
     db: Session = Depends(get_db),
 ):
-    """获取焊缝质量预测数据和可视化图表。可选 student_id 按学生过滤。"""
+    """获取焊缝质量预测数据。mode=fast 走 RF（默认），mode=deep 走 1D-CNN 时序模型。
+
+    深度模型在样本不足或训练失败时会自动回退到 RF，所以两条都能稳定返回。
+    """
+    if mode not in ("fast", "deep"):
+        raise HTTPException(status_code=400, detail="mode 只支持 fast 或 deep")
+    cache_key = (student_id, mode)
+
     try:
         # 计数也按学生过滤，否则缓存阈值会跨学生联动
         count_query = db.query(models.WeldingRecord)
@@ -185,7 +193,7 @@ async def get_prediction(
         current_time = time.time()
 
         with _prediction_cache["lock"]:
-            cache_entry = _get_cache_entry(student_id)
+            cache_entry = _get_cache_entry(cache_key)
 
             need_recalculate = False
             cache_reason = ""
@@ -248,7 +256,7 @@ async def get_prediction(
                 logger.info(f"使用缓存结果 (student={student_id or '-'}, 无法获取最新数据)")
                 return response
 
-        logger.info(f"开始执行预测流程... (student={student_id or '-'}, 原因: {cache_reason})")
+        logger.info(f"开始执行预测流程... (student={student_id or '-'}, mode={mode}, 原因: {cache_reason})")
 
         # 动态导入模块（如果之前导入失败）
         import importlib
@@ -258,6 +266,7 @@ async def get_prediction(
 
             generate_dataset = data_gen.generate_dataset
             predict_future_scores = prediction_mod.predict_future_scores
+            predict_with_temporal_model = prediction_mod.predict_with_temporal_model
         except ImportError as e:
             logger.warning(f"导入预测模块失败: {e}, 使用备用简化预测功能")
             # 使用简化的预测功能
@@ -336,8 +345,9 @@ async def get_prediction(
         logger.info(f"使用最近 {len(historical_data)} 条数据进行预测（共 {len(detection_data)} 条历史数据）")
 
         # 步骤2: 预测未来得分
-        logger.info("步骤2: 执行预测算法...")
-        prediction_result = predict_future_scores(historical_data, days=5)
+        logger.info(f"步骤2: 执行预测算法 (mode={mode})...")
+        predictor = predict_with_temporal_model if mode == "deep" else predict_future_scores
+        prediction_result = predictor(historical_data, days=5)
         logger.info(f"预测完成，历史数据点: {len(prediction_result['history'])}, 预测数据点: {len(prediction_result['forecast'])}")
 
         # 步骤3: 生成技能统计数据
@@ -425,7 +435,7 @@ async def get_prediction(
 
         # ========== 更新缓存 ==========
         with _prediction_cache["lock"]:
-            entry = _get_cache_entry(student_id)
+            entry = _get_cache_entry(cache_key)
             entry["last_result"] = response
             entry["last_record_count"] = current_record_count
             entry["last_calculation_time"] = current_time

@@ -6,6 +6,7 @@ import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Responsi
 import { API_ENDPOINTS } from "@/lib/api"
 import { getPredictionCacheKey } from "@/lib/storage"
 import { useAuth } from "@/contexts/AuthContext"
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
 interface PredictionData {
   history: Record<string, number>;
@@ -243,11 +244,16 @@ export function PredictionDashboardContent() {
   const [error, setError] = useState<string | null>(null)
   const [aiAnalysis, setAiAnalysis] = useState<any>(null)
   const [aiLoading, setAiLoading] = useState(false)
+  const [predictMode, setPredictMode] = useState<"fast" | "deep">("fast")
 
   // endpoint 和 localStorage 缓存都按学号分槽，免得切账号串味
   const studentId = currentUser?.student_id ?? null
-  const studentQuery = studentId ? `?student_id=${encodeURIComponent(studentId)}` : ""
-  const cacheKey = getPredictionCacheKey(studentId)
+  // mode 也算进 query 和 cache key，切换深度预测时 RF 缓存不会被串掉
+  const queryParams = new URLSearchParams()
+  if (studentId) queryParams.set("student_id", studentId)
+  if (predictMode === "deep") queryParams.set("mode", "deep")
+  const studentQuery = queryParams.toString() ? `?${queryParams.toString()}` : ""
+  const cacheKey = getPredictionCacheKey(studentId) + (predictMode === "deep" ? ":deep" : "")
 
   const fetchPredictionData = async (isBackground = false) => {
     try {
@@ -321,13 +327,13 @@ export function PredictionDashboardContent() {
 
   useEffect(() => {
     fetchPredictionData(false)
-    // 5 秒静默刷新；studentId 变化会重启 effect，确保切学生时立即拉新数据
+    // 5 秒静默刷新；studentId / predictMode 变化会重启 effect，立即拉新数据
     const interval = setInterval(() => {
       fetchPredictionData(true)
     }, 5000)
     return () => clearInterval(interval)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [studentId])
+  }, [studentId, predictMode])
 
   if (loading) {
     return (
@@ -360,10 +366,23 @@ export function PredictionDashboardContent() {
 
       {/* 上方：预测图表 */}
       <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 backdrop-blur-sm">
-        <CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-white text-xl">
             基于检测次数的质量趋势预测
           </CardTitle>
+          <ToggleGroup
+            type="single"
+            value={predictMode}
+            onValueChange={(v) => v && setPredictMode(v as "fast" | "deep")}
+            className="text-xs"
+          >
+            <ToggleGroupItem value="fast" className="px-3 py-1 data-[state=on]:bg-blue-600 data-[state=on]:text-white text-gray-300">
+              快速预测
+            </ToggleGroupItem>
+            <ToggleGroupItem value="deep" className="px-3 py-1 data-[state=on]:bg-blue-600 data-[state=on]:text-white text-gray-300">
+              深度预测
+            </ToggleGroupItem>
+          </ToggleGroup>
         </CardHeader>
         <CardContent className="p-6">
           <PredictionChart

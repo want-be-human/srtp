@@ -201,6 +201,59 @@ def predict_future_scores(data: pd.DataFrame, days: int = 5) -> Dict[str, Dict[s
     }
 
 
+def predict_with_temporal_model(data: pd.DataFrame, days: int = 5) -> Dict[str, Dict[str, float]]:
+    """1D-CNN 深度预测，返回结构和 predict_future_scores 一致。
+
+    内部把 DataFrame 行转成 [smoothness, width, defect, total] 的字典列表喂给
+    services.prediction.temporal_model；模型在样本足够时被首次调用时训出来并缓存，
+    样本不足或训练失败就回退到 RF（行为对调用方完全透明）。
+    """
+    if data.empty:
+        raise ValueError("输入数据不能为空")
+
+    df = data.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df['t']):
+        df['t'] = pd.to_datetime(df['t'])
+    df = df.sort_values('t').reset_index(drop=True)
+
+    history = {}
+    for _, row in df.iterrows():
+        ts = row['t'].strftime('%Y-%m-%d %H:%M:%S')
+        while ts in history:
+            ts = (pd.to_datetime(ts) + timedelta(seconds=1)).strftime('%Y-%m-%d %H:%M:%S')
+        history[ts] = round(float(row['score']), 2)
+
+    records = [
+        {
+            "smoothness_score": float(r["x"]),
+            "width_score": float(r["y"]),
+            "defect_score": float(r["z"]),
+            "total_score": float(r["score"]),
+        }
+        for _, r in df.iterrows()
+    ]
+
+    try:
+        from services.prediction import temporal_model
+    except ImportError:
+        return predict_future_scores(data, days=days)
+
+    model = temporal_model.get_or_train(records)
+    if model is None:
+        # 样本太少，回退到 RF，前端拿到的依旧是合法的 forecast
+        return predict_future_scores(data, days=days)
+
+    preds = temporal_model.forecast(model, records[-temporal_model.MAX_INFER_WINDOW:])
+    # forecast 字段沿用时间戳键以兼容现有下游（line_chart 等）
+    last_time = df['t'].max()
+    forecast_out = {}
+    for i, score in enumerate(preds[:days], start=1):
+        ts = (last_time + timedelta(days=i)).strftime('%Y-%m-%d %H:%M:%S')
+        forecast_out[ts] = round(float(score), 2)
+
+    return {"history": history, "forecast": forecast_out}
+
+
 def test_prediction():
     """
     测试预测函数
