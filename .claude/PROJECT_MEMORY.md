@@ -368,6 +368,27 @@ SQLite ─→ /predict → RandomForest → 历史+预测折线
 
 EXECUTION_PLAN 进入 v4：旧 D4-D6 + 旧 Phase E 缺陷热图全部废弃，替换为 11 项检测/预测算法升级。触发是队友反馈三大痛点 + 两条硬约束（单目 RGB 摄像头、综合评分权重 0.3/0.3/0.4 是学校规定）。完整清单见 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md)。
 
+**E-P1 完成（commit `f22461a`）**：
+
+| 文件 | 改动 |
+|---|---|
+| `backend/services/yolo/weld_roi.py` (新建) | `WeldRoiTracker`：HSV V 通道 clip 压过曝 + Otsu+21×3 闭运算挑最大连通域 + 上帧 bbox 膨胀 15px 收窄搜索带；YOLO 输入用 convertScaleAbs 把 ROI 外像素衰减到 0.3 倍 |
+| `backend/services/yolo/zonghe_*.py` | `detect_defects` 接入 ROI tracker + 按中心点过滤；`detect_width` 把 tracker.last_bbox 传给宽度检测；构造器加 `pixels_per_mm` 透传 |
+| `backend/services/yolo/kuandu_jiance_qiqi.py` | `_pick_best_row` 暗-亮-暗连续性筛选（两侧 [10,20] 像素带均值要比候选行至少暗 25）；`enhanced_weld_detection` 接 `roi_bbox`、构造器接 `pixels_per_mm` 直接换算 mm、结果带 `calibrated` |
+| `backend/models.py` | 新增 `CameraCalibration` 表 |
+| `backend/api/calibration.py` (新建) | POST `/calibration/save`、GET `/calibration/current`、DELETE `/calibration/{camera_id}`，加 `load_calibration_pixels_per_mm` helper 给 inference_loop 启动时调 |
+| `backend/api/yolo_realtime.py` | 加 `/snapshot` 端点给前端标定面板抓画面用；`inference_loop` 启动时读 DB 标定值传给 detector |
+| `backend/main.py` | 注册 calibration router |
+| `front/components/settings/camera-calibration.tsx` (新建) | 抓画面 + canvas 两点点选 + 输入真实长度 + 提交标定 |
+| `front/lib/api.ts` | 加 `CALIBRATION_SAVE` / `CALIBRATION_CURRENT` / `SNAPSHOT` 端点 |
+| `front/components/detection/yolo-realtime-detector.tsx` | 修连接泄漏：`startYOLODetection` 开头先清 `videoStreamUrl` + await microtask 再设新 URL；`<img>` 加 `key={videoStreamUrl}` |
+| `front/app/page.tsx` | `<CameraCalibrationCard />` 接进 SystemSettingsContent |
+
+P1 期间踩过的坑（演示时注意）：
+- IP 摄像头 URL 必须带 `http://` 前缀，否则 OpenCV 走裸 TCP 会 ETIMEDOUT
+- 反复 start/stop 不 stop 会撞 Chromium 同 host 6 连接上限，现已修复但要 stress test
+- 标定时存了 `image_width/height`，但 detector 加载时还没校验当前帧分辨率是否一致 → P2/P3 余力可补
+
 **E-P0 完成（commit `d1262c5`）**：
 
 | 文件 | 改动 |
