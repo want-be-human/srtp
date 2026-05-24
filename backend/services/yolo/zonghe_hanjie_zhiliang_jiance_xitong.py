@@ -1,10 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-焊缝质量综合检测系统
-整合光滑度检测、焊缝宽度检测、YOLOv8缺陷检测三个模块
-支持实时摄像头和视频文件检测
-支持GPU加速和多线程处理
-"""
+"""光滑度 + 宽度 + YOLO 缺陷三路并行的焊缝综合检测系统。"""
 
 import cv2
 import time
@@ -17,9 +12,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-# GPU检测和配置（静默模式）
 def get_device():
-    """自动检测并返回最佳计算设备（静默模式，不输出日志）"""
     try:
         import torch
 
@@ -32,10 +25,8 @@ def get_device():
         return "cpu"
 
 
-# 获取全局设备设置
 DEVICE = get_device()
 
-# 导入本地模块
 try:
     from ultralytics import YOLO
     from .guanghuadu_jiance_qiqi import WeldingQualityScorer
@@ -58,7 +49,6 @@ try:
     except Exception:
         pass
 
-    # 导入统一的缺陷类型定义
     sys.path.insert(
         0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     )
@@ -74,37 +64,29 @@ except ImportError as e:
 
 
 class IntegratedWeldDetector:
-    """焊缝质量综合检测系统"""
 
     def __init__(self, config_file: str = None, pixels_per_mm: Optional[float] = None):
         # pixels_per_mm 来自摄像头标定（CameraCalibration 表）；None 时宽度走估算
         self.pixels_per_mm = pixels_per_mm
-
-        # 加载配置
         self.config = self._load_config(config_file)
-
-        # 初始化各个检测模块
         self._init_modules()
-
-        # 统计信息
         self.total_frames = 0
         self.detection_history = []
 
     def _load_config(self, config_file: str = None) -> Dict:
-        """加载配置参数"""
         default_config = {
             "yolo_model_path": "models/best.pt",
-            "confidence_threshold": 0.3,  # 降低置信度阈值，更容易检测到缺陷
+            "confidence_threshold": 0.3,
             "iou_threshold": 0.45,
             "scoring_weights": {
-                "smoothness_weight": 0.3,  # 光滑度权重
-                "width_weight": 0.3,  # 宽度权重
-                "defect_weight": 0.4,  # 缺陷权重
+                "smoothness_weight": 0.3,
+                "width_weight": 0.3,
+                "defect_weight": 0.4,
             },
             "width_thresholds": {
-                "min_width_mm": 3.0,  # 最小宽度 3mm
-                "max_width_mm": 8.0,  # 最大宽度 8mm
-                "optimal_width_mm": 5.5,  # 最佳宽度 5.5mm
+                "min_width_mm": 3.0,
+                "max_width_mm": 8.0,
+                "optimal_width_mm": 5.5,
             },
             "display": {
                 "window_width": 1280,
@@ -125,21 +107,18 @@ class IntegratedWeldDetector:
         return default_config
 
     def _init_modules(self):
-        """初始化各检测模块"""
         print("正在初始化检测模块...")
 
         # 焊缝 ROI 跟踪器：跨帧复用上帧 bbox，给 YOLO 喂压过曝 + 背景衰减的输入
         self.roi_tracker = WeldRoiTracker()
 
-        # 1. 初始化光滑度检测器
         try:
             self.smoothness_detector = WeldingQualityScorer()
-            print("✓ 光滑度检测模块初始化完成")
+            print("[OK] 光滑度检测模块初始化完成")
         except Exception as e:
-            print(f"✗ 光滑度检测模块初始化失败: {e}")
+            print(f"[ERR] 光滑度检测模块初始化失败: {e}")
             self.smoothness_detector = None
 
-        # 2. 初始化宽度检测器
         try:
             self.width_detector = PreciseWeldDetector(
                 debug=False,
@@ -147,62 +126,45 @@ class IntegratedWeldDetector:
                 pixels_per_mm=self.pixels_per_mm,
             )
             cal_note = "已标定" if self.pixels_per_mm else "未标定，走估算"
-            print(f"✓ 宽度检测模块初始化完成（{cal_note}）")
+            print(f"[OK] 宽度检测模块初始化完成（{cal_note}）")
         except Exception as e:
-            print(f"✗ 宽度检测模块初始化失败: {e}")
+            print(f"[ERR] 宽度检测模块初始化失败: {e}")
             self.width_detector = None
 
-        # 3. 初始化YOLO缺陷检测器（支持GPU加速）
         try:
             yolo_path = self.config["yolo_model_path"]
             if not os.path.exists(yolo_path):
-                # 尝试相对路径
                 yolo_path = os.path.join(os.path.dirname(__file__), yolo_path)
 
             if os.path.exists(yolo_path):
                 self.yolo_model = YOLO(yolo_path)
-                # 使用统一的缺陷类型定义
                 self.defect_classes = DEFECT_CLASSES
                 self.defect_classes_cn = DEFECT_ID_TO_CN
 
-                # 设置设备（GPU优先，静默模式）
                 self.device = DEVICE
                 self.yolo_model.to(self.device)
-                print(f"✓ YOLO缺陷检测模块初始化完成")
-                print(f"✓ 模型路径: {yolo_path}")
-                print(f"✓ 支持{len(DEFECT_CLASSES)}种缺陷类型识别")
+                print(f"[OK] YOLO 检测模块初始化完成（{len(DEFECT_CLASSES)} 类缺陷，路径 {yolo_path}）")
             else:
-                print(f"✗ YOLO模型文件未找到: {yolo_path}")
-                print("请检查以下路径是否存在模型文件:")
-                print(f"  - {yolo_path}")
-                print(
-                    f"  - {os.path.join(os.path.dirname(__file__), 'models/best.pt')}"
-                )
+                print(f"[ERR] YOLO 模型文件未找到: {yolo_path}")
+                print(f"  备选路径: {os.path.join(os.path.dirname(__file__), 'models/best.pt')}")
                 self.yolo_model = None
                 self.defect_classes = {}
                 self.device = "cpu"
         except Exception as e:
-            print(f"✗ YOLO缺陷检测模块初始化失败: {e}")
+            print(f"[ERR] YOLO 缺陷检测模块初始化失败: {e}")
             self.yolo_model = None
             self.defect_classes = {}
             self.device = "cpu"
 
     def detect_smoothness(self, frame: np.ndarray) -> Dict:
-        """检测光滑度得分"""
         if self.smoothness_detector is None:
             return {"score": 0, "error": "光滑度检测器未初始化"}
 
         try:
-            # 直接在内存中处理，不保存临时文件
-            # 获取检测区域
             detection_region = self.smoothness_detector._get_detection_region(frame)
-
-            # 分析明暗度
             brightness_analysis = self.smoothness_detector._analyze_brightness(
                 detection_region
             )
-
-            # 计算得分
             score = self.smoothness_detector._calculate_score(brightness_analysis)
 
             return {
@@ -217,7 +179,6 @@ class IntegratedWeldDetector:
             return {"score": 0, "error": str(e)}
 
     def detect_width(self, frame: np.ndarray) -> Dict:
-        """检测焊缝宽度"""
         if self.width_detector is None:
             return {"width_mm": 0, "score": 0, "error": "宽度检测器未初始化"}
 
@@ -230,7 +191,6 @@ class IntegratedWeldDetector:
 
             if result["found"]:
                 width_mm = result["thickness_mm"]
-                # 根据宽度计算得分 (0-100)
                 width_score = self._calculate_width_score(width_mm)
 
                 return {
@@ -268,7 +228,6 @@ class IntegratedWeldDetector:
             }
 
         try:
-            # ROI 引导：HSV 抑制 + ROI 外像素衰减后再送 YOLO
             yolo_input = self.roi_tracker.process(frame)
 
             # 默认 1280 而不是 ultralytics 内置 640：焊缝小缺陷（裂纹/气孔）letterbox 后
@@ -285,7 +244,7 @@ class IntegratedWeldDetector:
             )
 
             detections = []
-            defect_score = 100  # 基础分数
+            defect_score = 100
             raw_count = 0
             dropped_outside = 0
 
@@ -339,35 +298,29 @@ class IntegratedWeldDetector:
         return self.detect_defects(frame, use_tta=True)
 
     def _calculate_width_score(self, width_mm: float) -> float:
-        """根据宽度计算得分"""
         thresholds = self.config["width_thresholds"]
         optimal = thresholds["optimal_width_mm"]
         min_width = thresholds["min_width_mm"]
         max_width = thresholds["max_width_mm"]
 
         if width_mm < min_width or width_mm > max_width:
-            return 20  # 超出范围，低分
+            return 20
 
-        # 计算与最佳宽度的距离
         distance = abs(width_mm - optimal)
         max_distance = max(optimal - min_width, max_width - optimal)
-
-        # 距离最佳宽度越近分数越高
+        # 距离最佳宽度按线性掉分，最多扣 60；超出范围直接保底 20
         score = 100 - (distance / max_distance) * 60
         return max(20, min(100, score))
 
     def calculate_total_score(
         self, smoothness_result: Dict, width_result: Dict, defect_result: Dict
     ) -> Dict:
-        """计算综合得分"""
         weights = self.config["scoring_weights"]
 
-        # 获取各模块得分
         smoothness_score = smoothness_result.get("score", 0)
         width_score = width_result.get("score", 0)
         defect_score = defect_result.get("score", 0)
 
-        # 加权计算总分
         total_score = (
             smoothness_score * weights["smoothness_weight"]
             + width_score * weights["width_weight"]
@@ -383,13 +336,11 @@ class IntegratedWeldDetector:
         }
 
     def draw_results(self, frame: np.ndarray, results: Dict) -> np.ndarray:
-        """在画面上绘制检测结果"""
         display_frame = frame.copy()
         font = cv2.FONT_HERSHEY_SIMPLEX
         font_scale = self.config["display"]["font_scale"]
         thickness = self.config["display"]["line_thickness"]
 
-        # 绘制总分
         total_score = results.get("total_score", 0)
         score_color = (
             (0, 255, 0)
@@ -408,7 +359,6 @@ class IntegratedWeldDetector:
             3,
         )
 
-        # 绘制各模块得分
         y_offset = 80
         cv2.putText(
             display_frame,
@@ -445,7 +395,6 @@ class IntegratedWeldDetector:
             thickness,
         )
 
-        # 显示调试信息
         y_offset += 25
         debug_info = results.get("debug_info", "")
         cv2.putText(
@@ -458,9 +407,7 @@ class IntegratedWeldDetector:
             thickness,
         )
 
-        # 绘制焊缝宽度标记 - 使用更明显的颜色和更粗的线条
         if "top_y" in results and "bottom_y" in results:
-            # 绘制红色宽度线，更容易看到
             cv2.line(
                 display_frame,
                 (0, results["top_y"]),
@@ -475,7 +422,6 @@ class IntegratedWeldDetector:
                 (0, 0, 255),
                 3,
             )
-            # 在线条旁边添加文字标注
             cv2.putText(
                 display_frame,
                 f"Top: {results['top_y']}",
@@ -495,12 +441,10 @@ class IntegratedWeldDetector:
                 2,
             )
         else:
-            # 如果没有检测到宽度，显示调试信息
             cv2.putText(
                 display_frame, "No width detected", (10, 150), font, 0.6, (0, 0, 255), 2
             )
 
-        # 绘制检测框（如果有缺陷检测结果）
         if "detections" in results:
             for detection in results["detections"]:
                 box = detection["box"]
@@ -508,10 +452,7 @@ class IntegratedWeldDetector:
                 class_name = detection["class_name"]
                 confidence = detection["confidence"]
 
-                # 选择颜色
                 color = (0, 255, 0) if "Good" in class_name else (0, 0, 255)
-
-                # 绘制框和标签
                 cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
                 label = f"{class_name}: {confidence:.2f}"
                 cv2.putText(
@@ -527,29 +468,22 @@ class IntegratedWeldDetector:
         return display_frame
 
     def process_frame(self, frame: np.ndarray) -> Dict:
-        """并行处理单帧图像"""
         start_time = time.time()
 
-        # 并行执行三个检测模块
         results = {}
-
         with ThreadPoolExecutor(max_workers=3) as executor:
-            # 提交三个任务
             future_smoothness = executor.submit(self.detect_smoothness, frame)
             future_width = executor.submit(self.detect_width, frame)
             future_defects = executor.submit(self.detect_defects, frame)
 
-            # 收集结果
             results["smoothness"] = future_smoothness.result()
             results["width"] = future_width.result()
             results["defects"] = future_defects.result()
 
-        # 计算综合得分
         score_result = self.calculate_total_score(
             results["smoothness"], results["width"], results["defects"]
         )
 
-        # 整合结果
         integrated_result = {
             **score_result,
             "width_mm": results["width"].get("width_mm", 0),
@@ -559,7 +493,6 @@ class IntegratedWeldDetector:
             "processing_time": time.time() - start_time,
         }
 
-        # 添加宽度位置信息用于绘制
         if "top_y" in results["width"]:
             integrated_result["top_y"] = results["width"]["top_y"]
             integrated_result["bottom_y"] = results["width"]["bottom_y"]
@@ -569,7 +502,6 @@ class IntegratedWeldDetector:
         return integrated_result
 
     def find_camera(self) -> Optional[int]:
-        """查找可用摄像头"""
         print("正在搜索可用摄像头...")
         for camera_id in range(10):
             cap = cv2.VideoCapture(camera_id)
@@ -582,7 +514,6 @@ class IntegratedWeldDetector:
         return None
 
     def run_camera_detection(self, camera_id: Optional[int] = None):
-        """运行摄像头实时检测"""
         if camera_id is None:
             camera_id = self.find_camera()
             if camera_id is None:
@@ -594,7 +525,6 @@ class IntegratedWeldDetector:
             print(f"无法打开摄像头 ID: {camera_id}")
             return
 
-        # 设置摄像头参数
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.config["display"]["window_width"])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config["display"]["window_height"])
         cap.set(cv2.CAP_PROP_FPS, 30)
@@ -611,16 +541,10 @@ class IntegratedWeldDetector:
                     print("无法读取摄像头画面")
                     break
 
-                # 处理帧
                 results = self.process_frame(frame)
-
-                # 绘制结果
                 display_frame = self.draw_results(frame, results)
-
-                # 显示画面
                 cv2.imshow("焊缝质量综合检测系统", display_frame)
 
-                # 处理按键
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord("q"):
                     break
@@ -642,7 +566,6 @@ class IntegratedWeldDetector:
             print(f"检测完成，共处理 {self.total_frames} 帧")
 
     def run_video_detection(self, video_path: str):
-        """运行视频文件检测"""
         if not os.path.exists(video_path):
             print(f"视频文件不存在: {video_path}")
             return
@@ -667,19 +590,13 @@ class IntegratedWeldDetector:
                         print("视频处理完成")
                         break
 
-                    # 处理帧
                     results = self.process_frame(frame)
-
-                    # 绘制结果
                     display_frame = self.draw_results(frame, results)
                 else:
-                    # 暂停时继续显示当前帧
                     cv2.imshow("焊缝质量综合检测系统 - 视频检测", display_frame)
 
-                # 显示画面
                 cv2.imshow("焊缝质量综合检测系统 - 视频检测", display_frame)
 
-                # 处理按键
                 key = cv2.waitKey(30) & 0xFF
                 if key == ord("q"):
                     break
@@ -688,7 +605,7 @@ class IntegratedWeldDetector:
                     save_path = f"video_detection_{timestamp}.jpg"
                     cv2.imwrite(save_path, display_frame)
                     print(f"当前画面已保存: {save_path}")
-                elif key == ord(" "):  # 空格键暂停/继续
+                elif key == ord(" "):
                     paused = not paused
                     print("已暂停" if paused else "继续播放")
 
@@ -701,7 +618,6 @@ class IntegratedWeldDetector:
 
 
 def main():
-    """主函数"""
     import argparse
 
     parser = argparse.ArgumentParser(description="焊缝质量综合检测系统")
@@ -711,21 +627,12 @@ def main():
 
     args = parser.parse_args()
 
-    print("=" * 60)
-    print("    焊缝质量综合检测系统")
-    print("    Integrated Weld Quality Detection System")
-    print("=" * 60)
-    print("功能: 光滑度检测 + 宽度检测 + 缺陷检测")
-    print("=" * 60)
-
-    # 创建检测器
+    print("焊缝质量综合检测系统")
     detector = IntegratedWeldDetector(args.config)
 
     if args.video:
-        # 视频文件检测
         detector.run_video_detection(args.video)
     else:
-        # 摄像头检测
         detector.run_camera_detection(args.camera)
 
     print("程序结束")

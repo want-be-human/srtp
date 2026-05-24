@@ -37,7 +37,6 @@ def _pick_best_row(row_brightness: np.ndarray, fusion_score: np.ndarray) -> int:
 
 
 class PreciseWeldDetector:
-    """精确焊缝检测器 - 基于颜色规律优化"""
 
     def __init__(
         self,
@@ -84,10 +83,8 @@ class PreciseWeldDetector:
         best_y = _pick_best_row(row_brightness, fusion_score)
         best_score = fusion_score[best_y]
 
-        # 4. 映射回原图坐标
         actual_y = top + best_y
 
-        # 5. 精确确定焊缝边界（基于银白色特征）
         min_thickness_cm = 0.5
         if self.pixels_per_mm is not None:
             pixels_per_cm = self.pixels_per_mm * 10.0
@@ -98,7 +95,7 @@ class PreciseWeldDetector:
         thickness_top = actual_y
         thickness_bottom = actual_y
 
-        # 向上搜索银白色边界
+        # 5% 银白色门槛：焊缝中线两侧的余高带银亮像素占比通常 > 5%，再低就当背景
         for dy in range(-12, 0):
             check_y = actual_y + dy
             if 0 <= check_y < height:
@@ -107,12 +104,11 @@ class PreciseWeldDetector:
                 ]
                 bright_ratio = np.sum(row > 120) / width
 
-                if bright_ratio > 0.05:  # 降低到5%银白色
+                if bright_ratio > 0.05:
                     thickness_top = check_y
                 else:
                     break
 
-        # 向下搜索银白色边界
         for dy in range(1, 13):
             check_y = actual_y + dy
             if 0 <= check_y < height:
@@ -121,21 +117,20 @@ class PreciseWeldDetector:
                 ]
                 bright_ratio = np.sum(row > 120) / width
 
-                if bright_ratio > 0.05:  # 降低到5%银白色
+                if bright_ratio > 0.05:
                     thickness_bottom = check_y
                 else:
                     break
 
         thickness = thickness_bottom - thickness_top + 1
 
-        # 6. 确保最小厚度
+        # 物理上焊缝再细也得有 0.5cm，宽度上下限收缩到这个最小值，避免边界搜索误判带来异常
         if thickness < min_thickness_pixels:
             half_min = min_thickness_pixels // 2
             thickness_top = max(0, actual_y - half_min)
             thickness_bottom = min(height - 1, actual_y + half_min)
             thickness = thickness_bottom - thickness_top + 1
 
-        # 7. 计算物理尺寸
         thickness_cm = float(thickness / pixels_per_cm)
         thickness_mm = float(thickness_cm * 10)
 
@@ -154,7 +149,6 @@ class PreciseWeldDetector:
         }
 
     def _get_max_continuous_length(self, row: np.ndarray) -> int:
-        """计算最长连续白色像素段"""
         max_length = 0
         current_length = 0
 

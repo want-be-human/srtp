@@ -1,8 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-光滑度检测模块
-通过分析焊接钢板图片的明暗度来评估焊缝质量
-"""
+"""焊缝表面光滑度评分：适中亮度占比 + GLCM 对比度 + 局部方差加权。"""
 
 import cv2
 import numpy as np
@@ -44,14 +41,11 @@ def _local_variance_mean(gray: np.ndarray, ksize: int = 5) -> float:
 
 
 class WeldingQualityScorer:
-    """焊缝质量评分器"""
 
     def __init__(self, config_file: str = None):
-        """初始化评分器"""
         self.config = self._load_config(config_file)
 
     def _load_config(self, config_file: str = None) -> Dict:
-        """加载配置参数"""
         default_config = {
             "y_divisions": 4,
             "detection_start_ratio": 0.25,
@@ -80,7 +74,6 @@ class WeldingQualityScorer:
         return default_config
 
     def _get_detection_region(self, image: np.ndarray) -> np.ndarray:
-        """获取检测区域（焊缝所在区域）"""
         height, width = image.shape[:2]
 
         start_y = int(height * self.config["detection_start_ratio"])
@@ -127,19 +120,12 @@ class WeldingQualityScorer:
         return float(np.clip(score, 0.0, self.config["max_score"]))
 
     def score_image(self, image_path: str, save_debug: bool = False) -> Dict:
-        """对单张图片进行评分"""
-        # 读取图片
         image = cv2.imread(image_path)
         if image is None:
             raise ValueError(f"无法读取图片: {image_path}")
 
-        # 获取检测区域
         detection_region = self._get_detection_region(image)
-
-        # 分析明暗度
         brightness_analysis = self._analyze_brightness(detection_region)
-
-        # 计算得分
         score = self._calculate_score(brightness_analysis)
 
         result = {
