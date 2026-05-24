@@ -3,12 +3,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Camera, CameraOff, Settings, TrendingUp, Upload, Image as ImageIcon } from "lucide-react"
+import { Camera, CameraOff, Settings, TrendingUp, Upload, Image as ImageIcon, Box } from "lucide-react"
 import { API_ENDPOINTS } from "@/lib/api"
 import { StorageKey, getString, setString, remove, getPredictionCacheKey } from "@/lib/storage"
 import { useDataTree } from '@/components/data-tree/data-tree-context'
 import { convertYOLOToTreeData } from '@/components/data-tree/data-adapter'
 import { useAuth } from "@/contexts/AuthContext"
+import { GaussianSplatViewer } from '@/components/detection/gaussian-splat-viewer'
 
 // 优先用 localStorage 里手工配的地址，没有就退回 env，再没有给空字符串
 // （空字符串后端会用 camera_id=0 走本地相机）
@@ -65,6 +66,7 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
   const [error, setError] = useState<string>('')
   const [isUploading, setIsUploading] = useState(false)
   const [cameraUrl, setCameraUrl] = useState<string>('')
+  const [viewMode, setViewMode] = useState<'realtime' | '3dgs'>('realtime')
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { addTreeData } = useDataTree()
   const { currentUser } = useAuth()
@@ -402,9 +404,42 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
               </div>
             </CardTitle>
           </CardHeader>
-          <CardContent className="h-[calc(100%-80px)]">
-            <div className="relative h-full bg-slate-900 rounded-lg overflow-hidden">
-              {uploadedImage ? (
+          <CardContent className="h-[calc(100%-80px)] relative">
+            <div className="flex gap-1 mb-3">
+              <button
+                onClick={() => setViewMode('realtime')}
+                className={`flex items-center px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                  viewMode === 'realtime'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-700/50 text-gray-400 hover:bg-slate-700 hover:text-white'
+                }`}
+              >
+                <Camera className="w-3.5 h-3.5 mr-1" />
+                实时检测
+              </button>
+              <button
+                onClick={() => setViewMode('3dgs')}
+                className={`flex items-center px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+                  viewMode === '3dgs'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-slate-700/50 text-gray-400 hover:bg-slate-700 hover:text-white'
+                }`}
+              >
+                <Box className="w-3.5 h-3.5 mr-1" />
+                3D重构视图
+              </button>
+            </div>
+
+            {viewMode === '3dgs' ? (
+              <div className="absolute inset-x-0 top-9 bottom-0 overflow-hidden">
+                <GaussianSplatViewer
+                  modelUrl={API_ENDPOINTS.MODEL_3DGS}
+                  detectionScores={currentScores}
+                />
+              </div>
+            ) : (
+              <div className="relative h-[calc(100%-36px)] bg-slate-900 rounded-lg overflow-hidden">
+                {uploadedImage ? (
                 // 显示上传的图片
                 <div className="relative h-full">
                   <img
@@ -455,7 +490,8 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                   )}
                 </div>
               )}
-            </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>

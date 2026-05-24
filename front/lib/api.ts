@@ -46,6 +46,12 @@ export const API_ENDPOINTS = {
 
   // 登录
   AUTH_LOGIN: `${API_BASE_URL}/api/v1/auth/login`,
+
+  // 视频上传 (3DGS)
+  UPLOAD_VIDEO: `${API_BASE_URL}/api/v1/upload-video`,
+
+  // 3DGS 模型
+  MODEL_3DGS: `${API_BASE_URL}/static/3dgs/model_light.ply`,
 };
 
 export default API_BASE_URL;

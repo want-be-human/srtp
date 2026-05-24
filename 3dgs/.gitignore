@@ -1,0 +1,36 @@
+# Large model files
+*.ply
+*.splat
+*.ksplat
+
+# Python
+__pycache__/
+*.pyc
+venv/
+*.egg-info/
+
+# Node
+node_modules/
+build/
+
+# Colmap
+colmap/
+
+# Training output
+output/
+data/test/distorted/
+data/test/sparse/
+data/test/stereo/
+data/test/images/
+data/test/input/
+
+# IDE
+.vscode/
+.idea/
+
+# Training video
+ruler.mp4
+
+# OS
+Thumbs.db
+.DS_Store
