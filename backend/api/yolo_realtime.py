@@ -70,12 +70,10 @@ latest_frame = None
 frame_lock = threading.Lock()
 detector_lock = threading.Lock()
 
-# ====== 可配置的默认参数（可通过 /video-stream 查询参数覆盖） ======
-# 目标摄像头抓帧FPS：下游 STREAM 30、INFERENCE 6，抓 60 一半帧会被覆盖浪费
+# 抓帧 FPS：下游 STREAM 30、INFERENCE 6，抓 60 一半帧会被覆盖浪费
 TARGET_CAMERA_FPS = 30
-# MJPEG 推流默认FPS
 STREAM_DEFAULT_FPS = 30
-# JPEG 编码默认质量（10-95，越低压缩越狠、带宽越小）
+# 10-95，越低压缩越狠、带宽越小
 JPEG_DEFAULT_QUALITY = 85
 # 请求相机源分辨率：2K 相机走 2K，YOLO 拿到 2K 原图后内部 letterbox 到 imgsz=1280
 CAPTURE_REQ_WIDTH = 2560
@@ -340,7 +338,7 @@ def capture_loop(camera_source):
         else:
             camera_cap = cv2.VideoCapture(camera_source)
         if not camera_cap.isOpened():
-            print(f"✗ 无法打开摄像头 {camera_source}")
+            print(f"[ERR] 无法打开摄像头 {camera_source}")
             is_detecting = False
             return
 
@@ -366,7 +364,7 @@ def capture_loop(camera_source):
         # fourcc 的 int 编码解回 ASCII 看相机实际跑哪种格式；不是 MJPG 几乎一定带宽爆
         fourcc_int = int(camera_cap.get(cv2.CAP_PROP_FOURCC))
         fourcc_str = bytes([(fourcc_int >> (8 * i)) & 0xff for i in range(4)]).decode('ascii', errors='replace')
-        print(f"✓ 摄像头 {camera_source} 已打开，源 {actual_w}x{actual_h}，输出 {DEFAULT_WIDTH}x{DEFAULT_HEIGHT}")
+        print(f"[OK] 摄像头 {camera_source} 已打开，源 {actual_w}x{actual_h}，输出 {DEFAULT_WIDTH}x{DEFAULT_HEIGHT}")
         print(f"  fourcc='{fourcc_str}' (空字符串=MSMF 不暴露此值，看下方 capture fps 反推)，驱动报告 fps={actual_fps:.1f} (请求 {TARGET_CAMERA_FPS})")
         if fourcc_str and fourcc_str != 'MJPG':
             print("  WARN: 不是 MJPG，相机跑未压缩格式，USB 2.0 带宽不够，fps 会暴跌到个位数")
@@ -381,17 +379,15 @@ def capture_loop(camera_source):
             ret, frame = camera_cap.read()
             read_dt = time.perf_counter() - t_read
             if not ret:
-                print("✗ 无法读取摄像头帧")
+                print("[ERR] 无法读取摄像头帧")
                 time.sleep(0.01)
                 continue
 
-            # 更新最新帧（用于视频流 & 推理）
             with frame_lock:
                 latest_frame = frame.copy()
 
             fps_meter.tick(read_dt, suffix=f"请求 {TARGET_CAMERA_FPS}")
 
-            # 控制抓帧节奏，趋近 TARGET_CAMERA_FPS
             next_frame_time += 1.0 / max(1, TARGET_CAMERA_FPS)
             sleep_dt = next_frame_time - time.perf_counter()
             if sleep_dt > 0:
@@ -402,7 +398,6 @@ def capture_loop(camera_source):
         import traceback
         traceback.print_exc()
     finally:
-        # 清理资源
         if camera_cap:
             camera_cap.release()
             camera_cap = None
@@ -410,11 +405,10 @@ def capture_loop(camera_source):
 
 
 def inference_loop():
-    """YOLO推理循环（后台线程）：周期性读取 latest_frame 做推理，更新 current_detection_data"""
+    """周期性读取 latest_frame 跑 YOLO，结果写到 current_detection_data。"""
     global is_detecting, detector, latest_frame, current_detection_data
 
     try:
-        # 初始化YOLO检测器
         if YOLO_AVAILABLE and IntegratedWeldDetector:
             # 摄像头标定值（如有），让 PreciseWeldDetector 把宽度像素换算成真实 mm
             try:
@@ -428,15 +422,13 @@ def inference_loop():
                     pixels_per_mm=pixels_per_mm,
                 )
             cal_msg = f"标定 {pixels_per_mm:.3f} px/mm" if pixels_per_mm else "未标定"
-            print(f"✓ YOLO检测器初始化成功（推理线程，{cal_msg}）")
+            print(f"[OK] YOLO 检测器初始化成功（推理线程，{cal_msg}）")
         else:
-            print("⚠ YOLO不可用（推理线程使用模拟数据）")
+            print("[WARN] YOLO 不可用（推理线程使用模拟数据）")
             detector = None
 
-        # 每个推理会话独立 stabilizer
         stabilizer = DetectionStabilizer()
 
-        # 推理频率控制
         interval = 1.0 / max(1, INFERENCE_FPS)
         next_t = time.perf_counter()
 
@@ -451,7 +443,6 @@ def inference_loop():
             else:
                 try:
                     if detector:
-                        # 使用真实YOLO检测
                         with detector_lock:
                             results = detector.process_frame(frame)
 
@@ -468,7 +459,6 @@ def inference_loop():
                         if detection_count == 0:
                             defect_name = "无缺陷"
                         else:
-                            # 优先使用中文名称，如果没有则将英文转换为中文
                             defect_name = confirmed[0].get("class_name_cn", "未知")
                             if defect_name == "未知":
                                 en_name = confirmed[0].get("class_name", "未知")
@@ -489,7 +479,6 @@ def inference_loop():
                             "debug_info": results.get("debug_info", "")
                         }
                     else:
-                        # 使用模拟数据
                         import random
                         smoothness = random.randint(70, 95)
                         width = random.randint(70, 95)
@@ -505,7 +494,6 @@ def inference_loop():
                             "detected_defects": []
                         }
 
-                    # 更新当前检测数据
                     with data_lock:
                         current_detection_data = detection_data
 
@@ -514,7 +502,6 @@ def inference_loop():
                     import traceback
                     traceback.print_exc()
 
-            # 节流推理频率
             next_t += interval
             dt = next_t - time.perf_counter()
             if dt > 0:
@@ -525,7 +512,6 @@ def inference_loop():
         import traceback
         traceback.print_exc()
     finally:
-        # 释放YOLO资源
         with detector_lock:
             detector = None
         print("推理循环已停止")
@@ -592,30 +578,27 @@ async def start_yolo_detection(request: StartDetectionRequest):
 
         # 启动抓帧与推理线程
         is_detecting = True
-        
-        # 确定摄像头来源（优先使用 URL）
+
+        # URL 优先于 device id；都没传就回退到 0 号设备
         camera_source = request.camera_url if request.camera_url else (request.camera_id if request.camera_id is not None else 0)
-        
-        # 抓帧线程
+
         cap_t = threading.Thread(
             target=capture_loop,
             args=(camera_source,),
             daemon=True
         )
         cap_t.start()
-        # 推理线程
         inf_t = threading.Thread(
             target=inference_loop,
             daemon=True
         )
         inf_t.start()
 
-        # 保存线程句柄
         global capture_thread, inference_thread
         capture_thread = cap_t
         inference_thread = inf_t
 
-        # 等待一下让检测器初始化
+        # 让推理线程的 YOLO 加载完再返回，前端拿 yolo-data 才不会扑空
         time.sleep(1)
 
         return {
@@ -634,7 +617,6 @@ async def start_yolo_detection(request: StartDetectionRequest):
 
 @router.post("/stop-yolo")
 async def stop_yolo_detection():
-    """停止YOLO检测"""
     global is_detecting, current_detection_data
 
     try:
@@ -644,10 +626,8 @@ async def stop_yolo_detection():
                 "message": "YOLO检测未在运行"
             }
 
-        # 停止检测
         is_detecting = False
 
-        # 等待线程结束
         global capture_thread, inference_thread
         if inference_thread:
             inference_thread.join(timeout=3)
@@ -671,7 +651,6 @@ async def stop_yolo_detection():
 
 @router.get("/yolo-data")
 async def get_yolo_data():
-    """获取最新的YOLO检测数据"""
     global current_detection_data, is_detecting
 
     try:
@@ -703,12 +682,8 @@ async def get_yolo_data():
 
 @router.post("/save-score")
 async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
-    """
-    保存单次检测分数到数据库
-    当用户按下按键时，前端调用此接口保存那一刻的分数
-    """
+    """按键瞬间触发：用 TTA 重算一次后入库，比实时显示更稳。"""
     try:
-        # 解析时间戳
         try:
             timestamp = datetime.fromisoformat(data.timestamp.replace('Z', '+00:00'))
         except:
@@ -720,11 +695,9 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
             except (TypeError, ValueError):
                 return 0.0
 
-        # TTA 出来的缺陷框入库时记一份归一化坐标，给热图用
         defect_bboxes_payload: Optional[List[dict]] = None
 
-        # 保存前用 TTA 重新算一次，入库分数比实时显示更稳。
-        # 关键：roi_tracker.process 没有内部锁，必须拿 detector_lock 不让 inference_loop
+        # roi_tracker.process 没有内部锁，必须拿 detector_lock 不让 inference_loop
         # 同时跑同一个 tracker。整段 detector 调用一起进线程池，事件循环不阻塞。
         if detector is not None and latest_frame is not None and is_detecting:
             try:
@@ -758,13 +731,11 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
                 # TTA 失败不阻断保存，沿用前端传来的瞬时分数
                 print(f"save-score TTA 失败，沿用前端分数: {exc}")
 
-        # 创建数据库记录
         db_record = models.WeldingRecord(
             timestamp=timestamp,
             student_id=data.student_id,
             student_name=data.student_name,
             batch_id=data.batch_id,
-            # 分数夹到 [0,100]
             smoothness_score=_clamp_score(data.smoothness_score),
             spacing_score=_clamp_score(data.width_score),
             defect_type_score=_clamp_score(data.defect_score),
@@ -779,7 +750,7 @@ async def save_score(data: ScoreData, db: SessionLocal = Depends(get_db)):
         db.commit()
         db.refresh(db_record)
 
-        print(f"✓ 分数已保存到数据库: ID={db_record.id}, 学生={data.student_id or '未知'}, 总分={data.total_score}")
+        print(f"[OK] 分数已保存: ID={db_record.id}, 学生={data.student_id or '未知'}, 总分={data.total_score}")
 
         return {
             "status": "success",
@@ -965,7 +936,6 @@ async def get_student_comparison(
 
 @router.get("/batch-list")
 async def get_batch_list(db: SessionLocal = Depends(get_db)):
-    """获取所有批次ID列表"""
     try:
         from sqlalchemy import distinct
 
@@ -989,25 +959,17 @@ async def get_batch_list(db: SessionLocal = Depends(get_db)):
 
 
 class FrameDetectionRequest(BaseModel):
-    """前端发送的帧数据"""
-    frame_data: str  # base64编码的图像
+    frame_data: str
 
 
 def generate_video_stream(fps: int, quality: int, width: int, height: int):
-    """生成MJPEG视频流 - 使用 capture_loop 捕获的帧
-
-    参数：
-      - fps: 目标推流帧率
-      - quality: JPEG编码质量（10-95）
-      - width, height: 编码前缩放到此分辨率
-    """
+    """capture_loop 抓到的 latest_frame 叠 OSD 后用 MJPEG 推给前端。"""
     global latest_frame, current_detection_data, is_detecting
 
-    # 预设下一帧发送时间，确保稳定帧间隔
     frame_interval = 1.0 / max(1, fps)
     next_send_time = time.perf_counter()
 
-    # 待机黑屏帧只构造一次：2K 时 zeros((1440,2560,3)) 是 ~10MB，每帧重分配很贵
+    # 待机黑屏只构造一次：2K 时 zeros((1440,2560,3)) 是 ~10MB，每帧重分配很贵
     idle_frame = np.zeros((height, width, 3), dtype=np.uint8)
     cv2.putText(idle_frame, "Camera not started", (150, 240),
                cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
@@ -1021,36 +983,31 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
                 frame_bytes = buffer.tobytes()
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            # 维持节奏
             next_send_time += frame_interval
             sleep_dt = next_send_time - time.perf_counter()
             if sleep_dt > 0:
                 time.sleep(sleep_dt)
             continue
 
-        # 获取最新帧的副本
         with frame_lock:
             display_frame = latest_frame.copy()
 
-        # 按需缩放，降低编码负载
         if display_frame.shape[1] != width or display_frame.shape[0] != height:
             try:
                 display_frame = cv2.resize(display_frame, (width, height), interpolation=cv2.INTER_AREA)
             except Exception:
                 pass
 
-        # 在帧上绘制检测结果 - 自定义绘制（解决top_y为None和中文显示问题）
+        # detector 内置 draw 不容忍 top_y=None 也不渲染中文，所以这里手画
         with data_lock:
             if current_detection_data:
                 font = cv2.FONT_HERSHEY_SIMPLEX
 
-                # 1. 绘制总分
                 total_score = current_detection_data.get('total_score', 0)
                 score_color = (0, 255, 0) if total_score >= 80 else (0, 165, 255) if total_score >= 60 else (0, 0, 255)
                 cv2.putText(display_frame, f'Total Score: {total_score:.1f}',
                           (10, 40), font, 1.0, score_color, 3)
 
-                # 2. 绘制各模块得分
                 smoothness = current_detection_data.get("smoothness", 0)
                 cv2.putText(display_frame, f'Smoothness: {smoothness:.1f}',
                           (10, 80), font, 0.6, (255, 255, 255), 2)
@@ -1065,7 +1022,6 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
                 cv2.putText(display_frame, f'Defect: {defect_score:.1f} ({detection_count} found)',
                           (10, 140), font, 0.6, (255, 255, 255), 2)
 
-                # 3. 绘制焊缝宽度标记线（如果有）
                 top_y = current_detection_data.get("top_y")
                 bottom_y = current_detection_data.get("bottom_y")
                 if top_y is not None and bottom_y is not None:
@@ -1085,16 +1041,12 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
                         class_name = detection.get("class_name", "Unknown")
                         confidence = detection.get("confidence", 0)
 
-                        # 选择颜色
                         color = (0, 255, 0) if "Good" in class_name else (0, 0, 255)
-
-                        # 绘制框和标签
                         cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
                         label = f'{class_name}: {confidence:.2f}'
                         cv2.putText(display_frame, label, (x1, y1-10 if y1 > 20 else y1+20),
                                   font, 0.6, color, 2)
 
-        # 编码为JPEG
         t_enc = time.perf_counter()
         ret, buffer = cv2.imencode('.jpg', display_frame, [cv2.IMWRITE_JPEG_QUALITY, quality])
         encode_dt = time.perf_counter() - t_enc
@@ -1104,12 +1056,9 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
         fps_meter.tick(encode_dt, suffix=f"请求 {fps}，{width}x{height} q={quality}")
 
         frame_bytes = buffer.tobytes()
-
-        # 返回MJPEG格式
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
 
-        # 维持推流帧率
         next_send_time += frame_interval
         sleep_dt = next_send_time - time.perf_counter()
         if sleep_dt > 0:
@@ -1123,7 +1072,7 @@ async def video_stream(
     width: int = Query(DEFAULT_WIDTH, ge=160, le=2560, description="编码宽度"),
     height: int = Query(DEFAULT_HEIGHT, ge=120, le=1440, description="编码高度"),
 ):
-    """MJPEG视频流接口（支持通过查询参数调整FPS/质量/分辨率）"""
+    """MJPEG 视频流，通过查询参数调 FPS / 质量 / 分辨率。"""
     return StreamingResponse(
         generate_video_stream(fps=fps, quality=quality, width=width, height=height),
         media_type="multipart/x-mixed-replace; boundary=frame"
@@ -1152,26 +1101,19 @@ async def get_snapshot():
 
 @router.post("/detect-frame")
 async def detect_frame(request: FrameDetectionRequest):
-    """
-    接收前端发送的摄像头帧，进行YOLO检测
-    前端通过canvas捕获video帧，转为base64发送
-    """
+    """前端用 canvas 抓 video 一帧、转 base64 发过来，单帧 YOLO 检测。"""
     global detector
 
     try:
-        # 初始化检测器（如果还没初始化）
         if detector is None and YOLO_AVAILABLE and IntegratedWeldDetector:
             detector = IntegratedWeldDetector(config_file=YOLO_CONFIG_FILE)
-            print("✓ YOLO检测器初始化成功")
+            print("[OK] YOLO 检测器初始化成功")
 
-        # 解码base64图像
         try:
-            # 移除data:image前缀（如果有）
             image_data = request.frame_data
             if ',' in image_data:
                 image_data = image_data.split(',')[1]
 
-            # 解码base64
             image_bytes = base64.b64decode(image_data)
             nparr = np.frombuffer(image_bytes, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -1185,7 +1127,6 @@ async def detect_frame(request: FrameDetectionRequest):
                 detail=f"图像解码失败: {str(e)}"
             )
 
-        # 进行YOLO检测
         if detector:
             try:
                 results = detector.detect_frame(frame)
@@ -1210,13 +1151,11 @@ async def detect_frame(request: FrameDetectionRequest):
                 print(f"YOLO检测失败: {e}")
                 import traceback
                 traceback.print_exc()
-                # 如果YOLO检测失败，返回模拟数据
                 raise HTTPException(
                     status_code=500,
                     detail=f"YOLO检测失败: {str(e)}"
                 )
         else:
-            # YOLO不可用，返回模拟数据
             import random
             smoothness = random.randint(70, 95)
             width = random.randint(70, 95)
@@ -1249,32 +1188,24 @@ async def detect_frame(request: FrameDetectionRequest):
 
 
 class ImageDetectionRequest(BaseModel):
-    """前端发送的图片数据"""
-    image_data: str  # base64编码的图像
+    image_data: str
 
 
 @router.post("/detect-image")
 async def detect_image(request: ImageDetectionRequest):
-    """
-    接收前端上传的图片，进行YOLO检测
-    用于上传图片检测功能
-    """
+    """前端上传图片走单次 YOLO 检测，与 detect_frame 区别在于不限于 video 抽帧。"""
     global detector
 
     try:
-        # 初始化检测器（如果还没初始化）
         if detector is None and YOLO_AVAILABLE and IntegratedWeldDetector:
             detector = IntegratedWeldDetector(config_file=YOLO_CONFIG_FILE)
-            print("✓ YOLO检测器初始化成功（图片检测）")
+            print("[OK] YOLO 检测器初始化成功（图片检测）")
 
-        # 解码base64图像
         try:
-            # 移除data:image前缀（如果有）
             image_data = request.image_data
             if ',' in image_data:
                 image_data = image_data.split(',')[1]
 
-            # 解码base64
             image_bytes = base64.b64decode(image_data)
             nparr = np.frombuffer(image_bytes, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
@@ -1288,7 +1219,6 @@ async def detect_image(request: ImageDetectionRequest):
                 detail=f"图像解码失败: {str(e)}"
             )
 
-        # 进行YOLO检测
         if detector:
             try:
                 results = detector.process_frame(frame)
@@ -1351,10 +1281,8 @@ async def detect_image(request: ImageDetectionRequest):
         )
 
 
-# 清理资源的回调
 @router.on_event("shutdown")
 async def shutdown_event():
-    """应用关闭时清理资源"""
     global is_detecting, camera_cap
     is_detecting = False
     if camera_cap:

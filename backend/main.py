@@ -33,8 +33,8 @@ def _ensure_welding_records_columns() -> None:
         with engine.begin() as conn:
             conn.execute(text("ALTER TABLE welding_records ADD COLUMN defect_bboxes JSON"))
     except SQLAlchemyError as exc:
-        # DB 被锁/权限不足等场景，热图功能降级（端点返回空），但不阻塞服务启动
-        print(f"⚠ defect_bboxes 列升级失败，热图功能将降级: {exc}")
+        # DB 被锁/权限不足等场景下不阻塞服务启动，新列没补上的话 /detection-heatmap 自然返回空
+        print(f"[WARN] defect_bboxes 列升级失败: {exc}")
 
 
 _ensure_welding_records_columns()

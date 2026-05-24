@@ -64,7 +64,7 @@ def _load_width_thresholds():
 
 
 _W = _load_width_thresholds()
-# 与 yolo_config.json::width_thresholds 同步，做下游统计（雷达图、报告）时复用
+# 从 yolo_config.json::width_thresholds 同步出来的内存副本
 OPTIMAL_WELD_WIDTH_MM = float(_W.get("optimal_width_mm", 5.5))
 MIN_WELD_WIDTH_MM = float(_W.get("min_width_mm", 3.0))
 MAX_WELD_WIDTH_MM = float(_W.get("max_width_mm", 8.0))

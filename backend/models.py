@@ -25,7 +25,7 @@ class WeldingRecord(Base):
     defect_type_name = Column(String(50), nullable=True, comment="缺陷类型名称")
     notes = Column(String(500), nullable=True, comment="备注")
 
-    # 缺陷分布热图素材：保存按键时把每个 bbox 归一化到 [0,1]
+    # 归一化到 [0,1] 的缺陷框列表，跨分辨率聚合时直接可用
     # 形如 [{"label": "Porosity", "label_cn": "气孔", "cx": 0.42, "cy": 0.31, "w": 0.08, "h": 0.06, "conf": 0.83}, ...]
     defect_bboxes = Column(JSON, nullable=True, comment="缺陷框归一化坐标列表")
 
