@@ -1,12 +1,14 @@
-# 焊育智眸 国赛执行计划（2026-05-22 v4）
+# 焊育智眸 国赛执行计划（2026-05-25 v5）
 
-> v4 修订：v3 列出的 D4/D5/D6（教学严格模式、TTS、标准对齐文案）和原 Phase E（缺陷热图独立项）全部废弃，
+> **v5 修订（2026-05-25）**：Phase E 11 项做完后做了一轮全栈审计，发现 4 项红色 + 3 项黄色 + 1 项绿色"已实现但展示不够 / 评委可攻破"的弱点。本次升级把审计结论、演示数据规则化（学生 ID/姓名/分数边界）、Mock 路径全标注、剩余 3 天路线全部写入。
+>
+> v4 修订（2026-05-22）：v3 的 D4/D5/D6（教学严格模式、TTS、标准对齐文案）和原 Phase E（缺陷热图独立项）全部废弃，
 > 替换为一组针对队友反馈 + 硬约束的检测/预测算法升级。
 > 触发原因：队友反馈 YOLO 全画面误检、轻量模型置信度抖、焊缝拟态逻辑差；
 > 同时确认两条硬约束：（1）检测方式只有单目 RGB 摄像头，无激光/X 光/声学/深度传感器；
 > （2）综合评分公式 `0.3·光滑 + 0.3·宽 + 0.4·缺陷` 是学校规定，权重不可改。
 
-冻结日：2026-05-28（国赛）。本文最后修订：2026-05-22。
+冻结日：2026-05-28（国赛）。本文最后修订：2026-05-25。
 
 ---
 
@@ -188,6 +190,128 @@
 
 7 天到冻结日：P0 + P1 + P2 必修（共 7 天），P3 视余力。
 
+### Phase E 审计结果（2026-05-25）— Phase E.v2 修补清单
+
+**P0-P3 11 项的完成度审计**（agent 三路并行查代码）：
+
+| 项 | 后端 | 前端可视 | 风险 | 备注 |
+|---|---|---|---|---|
+| E-P0-1 时序融合 | ✅ | ✅ | — | 完整落地 |
+| E-P0-2 attempt_index | ✅ | ✅ X 轴"第 N 次检测" | — | 完整落地 |
+| **E-P0-3 雷达 6 维洗白** | ✅ | ⚠️ 预测页接通，**对比页没接** | 🔴 | 学生对比页 `buildSixDimRadar` 仍用老派生公式，维度名也是旧 6 维 |
+| **E-P1-1 焊缝 ROI 引导** | ✅ | ❌ **前端零可视化** | 🔴 | `seam_theta` 和 ROI bbox 后端有，没透传到 MJPEG / 前端 |
+| E-P1-2 暗-亮-暗 | ✅ | ⚠️ 无效果计数/A-B 对比 | 🟡 | 拒绝候选行的数量未暴露 |
+| **E-P1-3 单目标定** | ✅ | ⚠️ 4 处实战漏洞 | 🔴 | 旧 `image_height_cm=15.0` 默认参数没删；未渲染 `calibrated_at`；检测页无"未标定"红字；canvas 两点点选无放大镜，~2-3mm 误差 |
+| E-P2-1 1D-CNN | ✅ | ✅ ToggleGroup | 🟡 | 无训练曲线落盘，评委"训练曲线给我看"答不上 |
+| E-P2-2 GLCM | ✅ | ✅ | 🟢 | 归一化常数 20/200 经验值，无 calibration |
+| E-P2-3 TTA 保存 | ✅ | ✅ | — | 完整落地 |
+| E-P3-1 热图 | ✅ | ✅ 双热图 | 🟡 | 全靠 `seed_demo_bboxes.py` mock；演示库真实按键 bbox 极少 |
+| **E-P3-2 AI schema 重试** | ❌ | — | 🟡 | **完全没做**，ai_analysis.py 仍是一次失败直接 fallback |
+| **A5 .gitignore + pyc 清理** | ❌ | — | 🔴 | 根目录无 .gitignore；56 个 pyc + welding.db 被 git tracked |
+| A6 tests/ 迁移 | ❌ | — | 🟢 | `check_db.py / simple_test.py / test_api.py / test_types.py` 仍在 backend/ 根 |
+
+---
+
+### Phase E.v2 — 修补 + 数据规则化（2026-05-25 起，3 天）
+
+#### 演示数据规则化（已完成 / Day 1 第一项）
+
+> 把演示数据当真实数据用，所以必须对齐真实系统的边界、命名、画像。下面是 v5 拍定的规则。
+
+**学生名单（6 人）**：
+
+| ID | 姓名 | weak 画像 | 检测次数 |
+|---|---|---|---|
+| `2024112434` | 陈思远 | weak=width，宽度起伏大 | 22 |
+| `2024111216` | 王俊杰 | weak=defect，缺陷多 | 25 |
+| `2024112605` | 林雨晴 | 均衡稳定 | 20 |
+| `2024110853` | 赵嘉宁 | 优等生 | 18 |
+| `2024113182` | 黄子睿 | weak=smooth，光滑度差 | 24 |
+| `2024110741` | 周文静 | 起伏大 | 21 |
+
+ID 格式 `202411xxxx`：2024 入学 + 11 月份/班号 + 4 位故意不连号序号。班级 `焊接班2024-A`。`student_demo` 学号保留作为孤儿记录归口。
+
+**分数生成规则**（对齐 yolo_config.json + 检测器实际边界）：
+
+| 项 | 边界 | 来源代码 |
+|---|---|---|
+| 单项分 | `[20, 100]` | `zonghe_*.py::_calculate_width_score` 保底 20；其他 max(0,min(100)) |
+| 综合分 | 严格 `0.3·smooth + 0.3·width + 0.4·defect` | 学校规定权重 |
+| 最佳宽度 | `5.5 mm` | `yolo_config.json::width_thresholds.optimal_width_mm` |
+| 宽度范围 | `[3.0, 8.0] mm` | `yolo_config.json` |
+| 越界保底 | **10% 样本**主动放到 3-8 之外 → 触发宽度=20 | `seed_demo_data.py::_pick_actual_width` |
+| 预测 fallback | `[60, 95]` | `predict.py:292` 老 RF 兜底范围 |
+
+**关键修正**（v4 → v5 数据漂移）：
+- v4 seed: `clamp(50, 98)` + width target `6.0mm` → 永远不会触底
+- v5 seed: `clamp(20, 100)` + width target `5.5mm` + 10% 越界样本 → 真实呈现「保底-上限」语义
+
+#### Day 1 — 红色优先（剩余）
+
+- **E-P0-3.v2 对比页雷达接通** ⭐ 🔴
+  - 改 `front/components/comparison/student-comparison.tsx::buildSixDimRadar`
+  - 删派生公式 `smooth*0.5+width*0.5` 等；改用 `/predict/ai-radar-data?student_id=` 拉真实 6 维
+  - 同时拉 self / opponent 两次（或后端加 `student_ids[]` 批量端点）
+  - 副标题 "间距/熔深/速度为真实分数代理估算" 删掉
+
+- **A5 .gitignore + pyc 清理** 🔴
+  - 写根 `.gitignore` 屏蔽 `__pycache__/`、`*.pyc`、`*.pyo`、`welding.db`、`.env`、`*.log`
+  - `git rm --cached -r backend/**/__pycache__ backend/welding.db`
+  - **welding.db 要不要清** 待和用户确认 — 现在 db 里就是演示数据，团队拉下来直接能用 vs 团队跑 seed 脚本自己生成
+
+- **Mock 路径 5 处 UI 标注**：
+  1. `yolo_realtime.py::inference_loop`（YOLO 不可用模拟数据）→ 响应里加 `is_mock: true` + 前端检测页右上红色 badge「YOLO 离线 · 演示数据」
+  2. `yolo_realtime.py::detect_frame / detect_image` 兜底 → 同上
+  3. `lesson-plan-export.tsx::MOCK_TEACHING_RECOMMENDATIONS / MOCK_LESSON_PLANS` → 每个滚动卡片顶部加灰色「示例文案」徽标
+  4. `predict.py:292` fallback → 响应里加 `is_fallback: true` + 预测面板顶部黄字「样本不足，规则预测」
+  5. `prediction-dashboard.tsx::EMPTY_SKILL_DATA` → 副标题灰字「暂无数据」
+
+#### Day 2 — 红色优先（继续）
+
+- **E-P1-1.v2 ROI 可视化** ⭐ 🔴
+  - `inference_loop` 把 `seam_theta` 和 ROI bbox 写进 `current_detection_data`
+  - `generate_video_stream` 在 MJPEG 上叠加：
+    - 黄色 ROI 包围框（dashed）
+    - 左上角 `θ = NN.N°` 文字
+    - 计数 `剔除 ROI 外 N 框`
+  - 评委「把焊缝 ROI 圈出来」→ 看 MJPEG 直接演示
+
+- **E-P1-3.v2 标定 4 漏洞修补** 🔴
+  - (a) 删 `kuandu_jiance_qiqi.py:45` 默认 `image_height_cm=15.0`；旧 fallback 路径返回 `calibrated=False` + 警告
+  - (b) 标定卡片显示 `calibrated_at` 时间戳（前端已有字段，加 JSX 渲染）
+  - (c) 检测页加 badge 读 `calibrated`：未标定 → 红字「未标定，宽度为估算值」；已标定 → 绿字「✓ 已标定 X.XXX px/mm」
+  - (d) Canvas 两点点选加放大镜（80×80px 跟随光标 4× 放大）+ 实时像素坐标显示
+
+#### Day 3 — 黄色 + 绿色
+
+- **E-P3-2.v2 AI schema 重试** 🟡
+  - `ai_analysis.py` 解析失败时把"上次输出无法解析为 JSON，请严格按 schema"加到 user message 重试 1 次
+  - prompt 附带 `severity_map`（`defect_types.py::get_severity_level`）
+  - pydantic 模型校验返回字段
+- **E-P2-1.v2 1D-CNN 训练曲线** 🟡
+  - `temporal_model.py::train_from_records` 训练循环里记 per-epoch loss
+  - 训完保存到 `docs/temporal_training_curve.png`（matplotlib）+ `docs/temporal_metrics.json`（最终 loss、R²、样本数）
+- **E-P1-2.v2 暗-亮-暗 计数** 🟡
+  - `kuandu_jiance_qiqi.py::_pick_best_row` 返回 `rejected_count`
+  - 透传到 `current_detection_data['width_debug']`
+  - MJPEG 角标显示
+- **A6 tests/ 迁移** 🟢
+  - `mkdir backend/tests && git mv check_db.py simple_test.py test_api.py test_types.py backend/tests/`
+  - 修 import path
+- **演示数据真实化策略**（不算修补，但要确认）
+  - 演示前一天用真摄像头按 5-10 次保存键，让 TTA 真写 bbox 进库
+  - 让评委看到的热图既有 mock 历史画像、又有真实采集点
+
+#### 工作量汇总（v5）
+
+| 阶段 | 项数 | 工作量 |
+|---|---|---|
+| 数据规则化 | 1 套（已完成）| 0.5 天 |
+| Day 1 红 | 3 | 1 天 |
+| Day 2 红 | 2 | 1 天 |
+| Day 3 黄+绿 | 4 | 1 天 |
+| **合计剩余** | **9** | **3 天**，刚好到 2026-05-28 |
+
 ### Phase F — 冻结
 
 - 2026-05-27：只修 bug，不加功能；连跑 3 遍演示
@@ -195,6 +319,12 @@
 - 演示注意事项：
   - **不要用 `npm run dev` 跑演示**。dev server 冷启动会按需编译路由，首次访问可能返回 `_not-found` 404。务必用 `npm run build && npm run start`
   - 生产构建后预热一遍：浏览器先访问 `/login` 和 `/`
+  - 演示前 walk through 检查清单：
+    1. 学生登录用新 ID（`2024112434` 陈思远等）+ 密码 `123456`
+    2. 检测页右上角看 `YOLO 在线/离线` badge 状态
+    3. 标定页显示 `已标定 X.XXX px/mm` + 时间戳
+    4. PK 视图雷达图 6 维都是新维度名（光滑度均值/宽度准度/缺陷控制/宽度稳定性/进步速率/缺陷集中度）
+    5. 热图既有 mock 画像也有当天真实按键采集点
 
 ---
 
@@ -225,6 +355,18 @@
 | 14 | 检测硬件 | **只有单目 RGB 摄像头**，排除依赖激光/X 光/声学/深度相机的方案 |
 | 15 | 算法升级排序 | 按 P0（修语义+稳态）→ P1（ROI 引导 + 拟态过滤 + 标定）→ P2（深度模型 + 高光抑制 + TTA）→ P3（热图 + AI schema） |
 | 16 | 命名 | 旧 D4-D6 + 旧 Phase E 全部废弃；新算法升级清单挂在新 Phase E 下 |
+
+### v5 新增决策（2026-05-25）
+
+| # | 议题 | 决策 |
+|---|---|---|
+| 17 | 演示数据当真实数据用 | 学生采集真焊接数据成本太高，演示库的 seed 数据按真实系统边界生成，用于答辩；评委如问真实采集，演示当天临时按 5-10 次保存键补充 |
+| 18 | 学生 ID 格式 | `202411xxxx` 4 位故意不连号（如 2434/1216/2605）；不要 0001/0002 顺序 |
+| 19 | 学生姓名 | 6 人挑接近真实学生姓名风格：陈思远/王俊杰/林雨晴/赵嘉宁/黄子睿/周文静 |
+| 20 | 分数生成边界 | 单项分 `[20, 100]`、10% 样本宽度越界触发保底 20、综合按严格权重算出；不再 v4 那种全部 [50,98] 的"美容"区间 |
+| 21 | Mock 标注 | 除 DB 外 5 处 mock 全部加 UI 标识（YOLO 离线 badge、预测 fallback 提示、lesson-plan 示例徽标、radar 暂无数据、detect-frame 兑底）；演示时评委一眼看清「哪是真 / 哪是兜底」 |
+| 22 | welding.db 是否进版本控制 | 待和用户确认（v4 之前是 tracked，v5 准备考虑 untrack） |
+| 23 | 审计漏洞修补节奏 | 3 天分 Day 1 / Day 2 / Day 3 三套件，每套件 simplify + commit + 用户授权双推 |
 
 ---
 
@@ -271,16 +413,17 @@ Claude 不写、不接、不调通联：
 
 ---
 
-## 8. 现在的下一步
+## 8. 现在的下一步（v5 / 2026-05-25 起）
 
-1. ✅ 本文档 v4 修订完毕
-2. 推送本次文档修订到双远程（文档改动可直接双推，无需用户审核）
-3. 进入 Phase E：从 P0 开始
-   - E-P0-1 时序融合 + EMA + IoU
-   - E-P0-2 修预测时间轴语义
-   - E-P0-3 雷达 6 维洗白
-4. 每完成一个 P-级别（P0/P1/P2/P3）跑 `/simplify` + 等用户复核 → commit → 用户授权后双推
-5. P0 → P1 → P2 → P3 → F
+1. ✅ Phase E 11 项 P0-P3 全部完成
+2. ✅ Phase E 审计完成，发现 4 红 / 3 黄 / 1 绿弱点
+3. ✅ 演示数据规则化完成（seed_students/seed_demo_data/seed_demo_bboxes 全部新 ID/姓名 + 边界对齐）
+4. **当前**：升级 EXECUTION_PLAN / PROJECT_MEMORY / algorithm_upgrades 文档到 v5（本次工作）
+5. 推送文档修订到双远程（文档改动可直接双推，无需用户审核）
+6. Day 1 代码套件：A5 .gitignore + E-P0-3 对比页雷达 + Mock 标注 5 处 → simplify → commit → 用户授权双推
+7. Day 2 代码套件：E-P1-1 ROI 可视化 + E-P1-3 标定 4 漏洞 → simplify → commit → 双推
+8. Day 3 代码套件：E-P3-2 + E-P2-1 训练曲线 + E-P1-2 计数 + A6 → simplify → commit → 双推
+9. Phase F 冻结准备：连跑 3 遍演示 + 当天真摄像头按 5-10 次保存键补充热图真实数据 + 备份
 
 ### 参考资料
 

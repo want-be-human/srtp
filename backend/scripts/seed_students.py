@@ -6,6 +6,10 @@
     python scripts/seed_students.py
 
 重跑不会覆盖已经存在的学号；要重置密码先手工删行再跑。
+
+--purge 模式会先把不在当前 ROSTER 里的学生删掉再插，用于演示前清掉旧学号：
+
+    python scripts/seed_students.py --purge
 """
 
 import os
@@ -21,12 +25,12 @@ import models
 
 
 ROSTER = [
-    ("2024001", "张三", "焊接班2024-A"),
-    ("2024002", "李四", "焊接班2024-A"),
-    ("2024003", "王五", "焊接班2024-A"),
-    ("2024004", "赵六", "焊接班2024-A"),
-    ("2024005", "钱七", "焊接班2024-A"),
-    ("2024006", "孙八", "焊接班2024-A"),
+    ("2024112434", "陈思远", "焊接班2024-A"),
+    ("2024111216", "王俊杰", "焊接班2024-A"),
+    ("2024112605", "林雨晴", "焊接班2024-A"),
+    ("2024110853", "赵嘉宁", "焊接班2024-A"),
+    ("2024113182", "黄子睿", "焊接班2024-A"),
+    ("2024110741", "周文静", "焊接班2024-A"),
 ]
 
 INITIAL_PASSWORD = "123456"
@@ -34,9 +38,19 @@ INITIAL_PASSWORD = "123456"
 
 def main():
     models.Base.metadata.create_all(bind=engine)
+    purge = "--purge" in sys.argv
 
     db = SessionLocal()
     try:
+        if purge:
+            keep_ids = {sid for sid, _, _ in ROSTER}
+            removed = (
+                db.query(models.Student)
+                .filter(~models.Student.student_id.in_(keep_ids))
+                .delete(synchronize_session=False)
+            )
+            print(f"清理不在 ROSTER 里的学生：{removed} 行")
+
         hashed = bcrypt.hashpw(INITIAL_PASSWORD.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
         added = skipped = 0
         for sid, name, batch in ROSTER:

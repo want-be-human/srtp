@@ -364,6 +364,49 @@ SQLite ─→ /predict → RandomForest → 历史+预测折线
 
 ## 10. 修订历史
 
+### v5 — 2026-05-25 起 Phase E 审计 + 演示数据规则化
+
+Phase E P0-P3 11 项全部完成后做了一轮全栈审计（3 路 agent 并行查代码 vs 计划），结论：4 项红色 + 3 项黄色 + 1 项绿色「已实现但展示不到位 / 评委可攻破」的弱点。同时把演示数据规则化（学生 ID/姓名/分数边界都对齐真实系统）。详见 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md) v5 章节。
+
+**关键发现**：
+
+| 弱点 | 类别 | 影响 |
+|---|---|---|
+| 学生对比页 `buildSixDimRadar` 还在用 v3 老派生公式（`smooth*0.5+width*0.5` 等），E-P0-3 后端洗白白做了 | 🔴 | 评委对比两页雷达发现维度名/算法两套 → 抓 0.5/0.4 系数追问 |
+| E-P1-1 焊缝 ROI 引导后端跑、前端零可视化（seam_theta + ROI bbox 没透传） | 🔴 | 「把焊缝 ROI 圈出来」答辩翻不到 |
+| E-P1-3 标定 4 漏洞：旧 `image_height_cm=15.0` 默认参数没删 / `calibrated_at` 没渲染 / 检测页无未标定红字 / canvas 两点点选无放大镜（~2-3mm 误差） | 🔴 | 评委「假装的 mm」硬伤的修补本身又成新硬伤 |
+| 根目录无 `.gitignore`，56 个 pyc + welding.db 被 tracked | 🔴 | 演示 git status 一堆"修改"；团队拉代码冲突 |
+| E-P3-2 AI schema 重试**完全没做**，ai_analysis.py 仍是一次失败直接 fallback | 🟡 | 演示 AI 教师栏目无算法层创新 |
+| E-P2-1 1D-CNN 无训练曲线落盘、无 R²/loss 指标 | 🟡 | 「训练曲线给我看」答辩翻不到 |
+| E-P3-1 热图全靠 mock，真实采集数据极少 | 🟡 | 评委追真实采集 → 答辩硬扛 |
+| E-P1-2 暗-亮-暗过滤计数没暴露到 UI | 🟡 | 创新点无法演示 |
+| E-P2-2 GLCM 归一化常数 20/200 经验值，无 calibration 数据支撑 | 🟢 | 经验值可答，扣分项不大 |
+| backend 根目录还有 4 个 test scratch script 没迁 | 🟢 | 整理项 |
+
+**演示数据规则化**（v4 → v5 完成的迁移）：
+
+| 项 | v4 | v5 |
+|---|---|---|
+| 学生 ID 格式 | `2024001..006` 顺序 | `2024112434 / 2024111216 / 2024112605 / 2024110853 / 2024113182 / 2024110741` 故意不连号 |
+| 学生姓名 | 张三 李四 王五 赵六 钱七 孙八（明显假） | 陈思远 王俊杰 林雨晴 赵嘉宁 黄子睿 周文静 |
+| 单项分边界 | `clamp(50, 98)` 永远不触底 | `clamp(20, 100)`，对齐 `zonghe_*.py::_calculate_width_score` 保底 20 |
+| 最佳宽度 | `6.0mm`（写死） | `5.5mm`，对齐 `yolo_config.json::optimal_width_mm` |
+| 越界样本比例 | 0% | 10%（让宽度=20 真实出现） |
+| 综合分计算 | 自己 noise | 严格按 `0.3·smooth + 0.3·width + 0.4·defect` |
+| `seed_students.py` | 仅"跳过已存在" | 加 `--purge` 模式：先清不在 ROSTER 里的学生 |
+
+**Mock 路径标注规则**（除 DB 外 5 处全部要 UI 标识）：
+1. `yolo_realtime.py::inference_loop` YOLO 不可用兜底 → 响应 `is_mock: true` + 前端红色 badge「YOLO 离线 · 演示数据」
+2. `yolo_realtime.py::detect_frame / detect_image` 兜底 → 同上
+3. `lesson-plan-export.tsx::MOCK_TEACHING_RECOMMENDATIONS / MOCK_LESSON_PLANS` → 滚动卡片顶部加灰色「示例文案」徽标
+4. `predict.py:292` 预测 fallback → 响应 `is_fallback: true` + 预测面板顶部黄字「样本不足，规则预测」
+5. `prediction-dashboard.tsx::EMPTY_SKILL_DATA` → 副标题灰字「暂无数据」
+
+**Phase E.v2 修补节奏**（3 天到冻结日 2026-05-28）：
+- **Day 1**（红色第一批）：A5 .gitignore + E-P0-3 对比页雷达接通 + Mock 标注 5 处
+- **Day 2**（红色第二批）：E-P1-1 ROI MJPEG 可视化 + E-P1-3 标定 4 漏洞
+- **Day 3**（黄+绿）：E-P3-2 AI 重试 + E-P2-1 训练曲线 + E-P1-2 计数 + A6 tests/ 迁移
+
 ### v4 — 2026-05-22 起 国赛 Phase E 算法升级
 
 EXECUTION_PLAN 进入 v4：旧 D4-D6 + 旧 Phase E 缺陷热图全部废弃，替换为 11 项检测/预测算法升级。触发是队友反馈三大痛点 + 两条硬约束（单目 RGB 摄像头、综合评分权重 0.3/0.3/0.4 是学校规定）。完整清单见 [EXECUTION_PLAN.md](./EXECUTION_PLAN.md)。

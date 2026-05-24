@@ -494,12 +494,66 @@ calibrated 标志"的完整闭环交付出来。
 
 ---
 
-## 13. 后续工作（冻结日前可选）
+## 13. 审计发现的弱点与修补计划（v5，2026-05-25 起）
 
-- AI schema 重试：`ai_analysis.py` 解析失败后用更明确的 schema prompt 重试一次
+P0-P3 11 项完成后做了一轮全栈审计，发现以下「已实现但展示不到位 / 评委可攻破」的弱点。
+按红 → 黄 → 绿三级排序，3 天内完成修补（Day 1-3）。
+
+### 🔴 红色（必修，否则评委直接攻破）
+
+| 编号 | 弱点 | 评委可能的提问 | 修补方案 |
+|---|---|---|---|
+| **E-P0-3.v2** | 学生对比页 `buildSixDimRadar` 仍用 v3 老派生公式（`smooth*0.5+width*0.5`、`defect*0.6+smooth*0.4`、`total*0.92`），维度名是旧 6 维「光滑度/间距控制/缺陷控制/焊缝宽度/熔深控制/焊接速度」 | 「预测页雷达和对比页雷达为什么不一样？」「0.6/0.4 系数怎么来的？」 | 删 `buildSixDimRadar` 派生公式；改用 `/predict/ai-radar-data?student_id=` 拉真实 6 维（self + opponent 各拉一次） |
+| **E-P1-1.v2** | 焊缝 ROI 引导后端跑、前端零可视化（`seam_theta` + ROI bbox 没透传到 MJPEG / 前端） | 「把焊缝 ROI 圈出来给我看」 | `inference_loop` 把 `seam_theta` 和 ROI bbox 写进 `current_detection_data`；`generate_video_stream` 在 MJPEG 上叠 ROI 框 + θ 角度 + 「剔除 ROI 外 N 框」计数 |
+| **E-P1-3.v2** | 标定 4 处实战漏洞：(a) 旧 `image_height_cm=15.0` 默认参数没删 / (b) `calibrated_at` 没渲染 / (c) 检测页无「未标定」红字 / (d) canvas 两点点选无放大镜，~2-3mm 误差 | 「标定完不重启能用吗？」「标定时间哪天？」「5.3mm 怎么证明是真 mm？」「两点点偏 3 像素差多少 mm？」 | (a) 删默认参数，未标定走 fallback + `calibrated=False`；(b) 标定卡显示 `calibrated_at`；(c) 检测页加 badge；(d) 两点点选加 80×80 跟随放大镜 + 实时像素坐标 |
+| **A5** | 根目录无 `.gitignore`，56 个 pyc + welding.db 被 git tracked | 「commit 里为什么全是编译产物？」 | 写根 `.gitignore` 屏蔽 `__pycache__/`、`*.pyc`、`*.pyo`、`*.log`、`.env`、可选 `welding.db`；`git rm --cached -r` 把这些从追踪里清掉 |
+
+### 🟡 黄色（应修，影响展示完整性）
+
+| 编号 | 弱点 | 评委可能的提问 | 修补方案 |
+|---|---|---|---|
+| **E-P3-2.v2** | AI schema 重试**完全没做**，`ai_analysis.py` 仍是一次失败直接 fallback | 「AI 拿到的 schema 长什么样？失败怎么办？」 | 解析失败时把「上次输出无法解析为 JSON，请严格按 schema」加到 user message 重试 1 次；prompt 附 `severity_map`；pydantic 校验返回字段 |
+| **E-P2-1.v2** | 1D-CNN 无训练曲线、无 R²/loss 落盘 | 「训练曲线在哪？loss 是多少？」 | `train_from_records` 训练循环记 per-epoch loss；训完保存 `docs/temporal_training_curve.png` + `docs/temporal_metrics.json` |
+| **E-P1-2.v2** | 暗-亮-暗连续性过滤数量没暴露到 UI | 「拿一段反光带视频对比开/关」 | `_pick_best_row` 返回 `rejected_count`，透传到 `current_detection_data`，MJPEG 角标显示 |
+
+### 🟢 绿色（顺手做）
+
+| 编号 | 弱点 | 修补方案 |
+|---|---|---|
+| **A6** | backend 根目录还有 4 个 test scratch script (`check_db.py / simple_test.py / test_api.py / test_types.py`) | `mkdir backend/tests && git mv` |
+
+### 演示数据规则化（v5 已完成）
+
+E-P3-1 缺陷热图、综合分、雷达 6 维都依赖 DB 历史记录。为答辩时拿"演示数据当真实数据用"，
+v5 把 seed 数据按真实系统边界规则化：
+
+- **学生 ID**：`202411xxxx` 形式 4 位不连号尾数（如 `2024112434` 陈思远），不再 `2024001..006`
+- **学生姓名**：陈思远 / 王俊杰 / 林雨晴 / 赵嘉宁 / 黄子睿 / 周文静（接近真实学生风格）
+- **单项分边界**：`[20, 100]`，对齐 `zonghe_*.py::_calculate_width_score` 保底 20
+- **最佳宽度**：`5.5mm`，对齐 `yolo_config.json::optimal_width_mm`
+- **越界样本比例**：10%（让宽度=20 真实出现，体现保底语义）
+- **综合分**：严格按 `0.3·smooth + 0.3·width + 0.4·defect`（学校规定权重）
+
+### Mock 路径标注（v5 规则化）
+
+除 DB 外 5 处 mock，全部在 UI 上标识，让评委一眼看清「哪是真 / 哪是兜底」：
+
+1. `yolo_realtime.py::inference_loop` YOLO 不可用兜底 → 响应 `is_mock: true` + 前端红色 badge
+2. `yolo_realtime.py::detect_frame / detect_image` 兜底 → 同上
+3. `lesson-plan-export.tsx::MOCK_TEACHING_RECOMMENDATIONS / MOCK_LESSON_PLANS` → 滚动卡片顶部加灰色「示例文案」徽标
+4. `predict.py:292` 预测 fallback → 响应 `is_fallback: true` + 预测面板黄字「样本不足，规则预测」
+5. `prediction-dashboard.tsx::EMPTY_SKILL_DATA` → 副标题灰字「暂无数据」
+
+---
+
+## 14. 后续可选（冻结日后 / 评委建议方向）
+
 - 标定分辨率不匹配自动告警（detector 加载时对比当前帧尺寸）
 - `lesson_plan.py:271` 第三份硬编码非缺陷标签集合 → 改用 `NON_DEFECT_LABELS`
-- `student-comparison.tsx` 还用老的派生公式拼 6 维 → 消费后端真实雷达数据
+- GLCM 归一化常数 20/200 改成基于实际焊接样本的统计阈值（需大量标注数据）
+- 热图加 bandwidth 自适应（Silverman 法则）
+- 热图加时间分桶（最近一周 vs 上周对比）
+- 1D-CNN 双向时序（BiTCN）实验
 - 用 2K 数据集重训 best.pt（imgsz=1280），让 §15 推理 imgsz 的潜力真正发挥（当前仍受
   训练 imgsz 限制）
 - 焊缝 3D 高斯泼溅建模管线第二步（3DGS 训练 + 前端 .splat 渲染），硬件方案见
