@@ -13,7 +13,7 @@ interface PredictionData {
   forecast: Record<string, number>;
   skill_stats: Record<string, number>;
   defect_stats: Record<string, number>;
-  total_detections: number;  // 总检测次数
+  total_detections: number;
 }
 
 interface RadarData {
@@ -40,7 +40,6 @@ function EmptyBadge() {
   )
 }
 
-// 预测图表组件
 function PredictionChart({ historyData, forecastData }: {
   historyData: Record<string, number> | null;
   forecastData: Record<string, number> | null;
@@ -53,7 +52,7 @@ function PredictionChart({ historyData, forecastData }: {
     )
   }
 
-  // 转换数据格式为 Recharts 需要的格式 - 使用检测次数而不是时间
+  // X 轴走「第 N 次检测」而非时间戳，因为采样间隔不固定
   const historyPoints = Object.entries(historyData).map(([date, score], index) => ({
     detection: `第${index + 1}次`,
     detectionNumber: index + 1,
@@ -121,7 +120,6 @@ function PredictionChart({ historyData, forecastData }: {
   )
 }
 
-// 缺陷雷达图组件
 function DefectRadar({ radarData }: { radarData: RadarData | null }) {
   const isEmpty = !radarData?.defect_radar || radarData.data_source === "DATABASE_EMPTY"
   const displayData = radarData?.defect_radar || EMPTY_DEFECT_DATA
@@ -158,7 +156,6 @@ function DefectRadar({ radarData }: { radarData: RadarData | null }) {
   )
 }
 
-// 技能雷达图组件
 function SkillRadar({ radarData }: { radarData: RadarData | null }) {
   const isEmpty = !radarData?.skill_radar || radarData.data_source === "DATABASE_EMPTY"
   const displayData = radarData?.skill_radar || EMPTY_SKILL_DATA
@@ -195,7 +192,6 @@ function SkillRadar({ radarData }: { radarData: RadarData | null }) {
   )
 }
 
-// AI输出框组件
 function AIOutputBox({ aiAnalysis }: { aiAnalysis?: any }) {
   return (
     <div className="bg-slate-800 border border-slate-600 rounded-lg p-4 h-full">
@@ -265,7 +261,6 @@ export function PredictionDashboardContent() {
           try {
             setPredictionData(JSON.parse(cachedData))
             setLoading(false)
-            console.log('立即显示缓存数据')
           } catch (e) {
             console.warn('缓存数据解析失败')
           }
@@ -289,9 +284,6 @@ export function PredictionDashboardContent() {
       localStorage.setItem(cacheKey, JSON.stringify(data))
       localStorage.setItem(`${cacheKey}:time`, Date.now().toString())
       setLoading(false)
-      if (!isBackground) {
-        console.log('数据更新完成，total_detections:', data.total_detections, 'history点数:', Object.keys(data.history || {}).length)
-      }
 
       if (!isBackground) {
         setTimeout(async () => {
@@ -359,12 +351,10 @@ export function PredictionDashboardContent() {
 
   return (
     <div className="h-full p-6 space-y-6">
-      {/* 顶部标题 */}
       <div className="flex justify-between items-center">
         <h2 className="text-3xl font-bold text-white">智能焊接预测分析</h2>
       </div>
 
-      {/* 上方：预测图表 */}
       <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 backdrop-blur-sm">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <CardTitle className="text-white text-xl">
@@ -392,9 +382,7 @@ export function PredictionDashboardContent() {
         </CardContent>
       </Card>
 
-      {/* 下方：左侧雷达图 + 右侧AI输出 */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* 缺陷雷达图 */}
         <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 backdrop-blur-sm">
           <CardHeader>
             <CardTitle className="text-white text-lg">
@@ -406,7 +394,6 @@ export function PredictionDashboardContent() {
           </CardContent>
         </Card>
 
-        {/* 技能雷达图 */}
         <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 backdrop-blur-sm">
           <CardHeader>
             <CardTitle className="text-white text-lg">
@@ -418,7 +405,6 @@ export function PredictionDashboardContent() {
           </CardContent>
         </Card>
 
-        {/* AI输出框 */}
         <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 backdrop-blur-sm">
           <CardContent className="p-6">
             <AIOutputBox aiAnalysis={aiAnalysis} />

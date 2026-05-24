@@ -18,18 +18,15 @@ import {
   buildStartBody,
 } from "@/lib/camera-config"
 
-// YOLO检测结果的类型定义
 export interface YOLODetectionResult {
-  smoothness: number;      // 光滑度评分
-  width: number;          // 宽度评分
-  defectType: number;     // 缺陷类型评分
-  totalScore: number;     // 总评分
-  timestamp: string;      // 时间戳
-
-  // 详细信息（用于显示）
-  actualWidth?: number;   // 实际宽度值(mm)
-  defectTypeName?: string; // 缺陷类型名称
-  detectedDefects?: string[]; // 检测到的缺陷列表
+  smoothness: number;
+  width: number;
+  defectType: number;
+  totalScore: number;
+  timestamp: string;
+  actualWidth?: number;
+  defectTypeName?: string;
+  detectedDefects?: string[];
 }
 
 // 切模块时检测组件会被卸载，下面这几项必须由父级保活
@@ -76,11 +73,10 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     setCameraChoice(stored.mode === "default" ? envFallbackChoice() : stored)
   }, [])
 
-  // 启动后端YOLO检测
   const startYOLODetection = async () => {
     try {
       setError('')
-      // 旧的 <img> 若还在挂着 MJPEG，先卸载一次，浏览器才会真的断开 socket。
+      // 旧的 <img> 若还在挂着 MJPEG，先卸载一次浏览器才会真的断开 socket。
       // React 18 在 await 之后会打断 setState batch，让"无 <img>"那一帧真的渲染出来。
       setVideoStreamUrl('')
       await new Promise((r) => setTimeout(r, 0))
@@ -95,8 +91,7 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
 
       const result = await response.json()
       if (result.status === 'success' || result.status === 'already_running') {
-        console.log('YOLO检测启动成功:', result.message)
-        // 设置视频流URL
+        // 加 t= 时间戳让浏览器认为是新 URL，触发 <img> 重新连接 MJPEG
         setVideoStreamUrl(`${API_ENDPOINTS.VIDEO_STREAM}?t=${Date.now()}`)
         return true
       } else {
@@ -109,21 +104,15 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     }
   }
 
-  // 停止YOLO检测
   const stopYOLODetection = async () => {
     try {
-      const response = await fetch(API_ENDPOINTS.STOP_YOLO, {
-        method: 'POST'
-      })
-      const result = await response.json()
-      console.log('YOLO检测停止:', result.message)
+      await fetch(API_ENDPOINTS.STOP_YOLO, { method: 'POST' })
       setVideoStreamUrl('')
     } catch (err) {
       console.error('停止YOLO失败:', err)
     }
   }
 
-  // 获取YOLO检测数据
   const fetchYOLOData = async (): Promise<YOLODetectionResult | null> => {
     try {
       const response = await fetch(API_ENDPOINTS.YOLO_DATA)
@@ -148,16 +137,13 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     }
   }
 
-  // 开始/停止检测
   const toggleDetection = async () => {
     if (!isDetecting) {
-      // 启动YOLO检测
       const success = await startYOLODetection()
       if (success) {
         setIsDetecting(true)
       }
     } else {
-      // 停止检测
       await stopYOLODetection()
       setIsDetecting(false)
     }
@@ -183,7 +169,7 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     }
   }, [isDetecting])
 
-  // 发送当前数据到后端和数据树
+  // 同时发往预测系统后端和前端数据树（双轨保存）
   const handleSendData = async () => {
     if (!currentScores) {
       alert('暂无检测数据可发送，请先启动检测')
@@ -191,7 +177,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     }
 
     try {
-      // 1. 发送到预测系统后端
       const response = await fetch(API_ENDPOINTS.PREDICT_YOLO_DATA, {
         method: 'POST',
         headers: {
@@ -219,7 +204,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
         localStorage.removeItem(ckey)
         localStorage.removeItem(`${ckey}:time`)
 
-        // 2. 同时发送到数据树
         const treeData = convertYOLOToTreeData({
           total_score: currentScores.totalScore,
           smoothness_score: currentScores.smoothness,
@@ -233,7 +217,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
 
         alert(`✅ 检测数据发送成功！\n• 已存储${result.data_count || 1}条数据到预测系统\n• 数据已添加到3D数据树可视化`)
 
-        // 如果有回调，也调用一下（保持兼容性）
         if (onSendData) {
           onSendData(currentScores)
         }
@@ -246,7 +229,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     }
   }
 
-  // 处理图片上传检测
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -255,14 +237,13 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     setError('')
 
     try {
-      // 显示上传的图片预览
       const reader = new FileReader()
       reader.onload = async (e) => {
         const base64Image = e.target?.result as string
         setUploadedImage(base64Image)
-        setVideoStreamUrl('') // 清除视频流
+        // 上传图片走静态检测路径，先把 MJPEG 流停掉
+        setVideoStreamUrl('')
 
-        // 发送图片到后端检测
         try {
           const response = await fetch(API_ENDPOINTS.DETECT_IMAGE, {
             method: 'POST',
@@ -305,7 +286,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
     }
   }
 
-  // 切换到实时检测模式
   const switchToRealtimeMode = () => {
     setUploadedImage(null)
     setCurrentScores(null)
@@ -335,7 +315,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
         onOpenChange={setSelectorOpen}
         onSaved={setCameraChoice}
       />
-      {/* 左侧：摄像头检测区域 */}
       <div className="lg:col-span-2">
         <Card className="bg-slate-800/50 border-slate-600 h-full">
           <CardHeader>
@@ -454,7 +433,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
         </Card>
       </div>
 
-      {/* 右侧：实时检测结果 */}
       <div className="lg:col-span-1">
         <Card className="bg-slate-800/50 border-slate-600 h-full">
           <CardHeader>
@@ -466,7 +444,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
           <CardContent className="h-[calc(100%-80px)] flex flex-col">
             {currentScores ? (
               <div className="space-y-4 flex-1">
-                {/* 总分显示 */}
                 <div className="text-center bg-slate-900/50 rounded-lg p-4">
                   <div className="relative">
                     <div className={`text-4xl font-bold text-transparent bg-gradient-to-r ${getScoreColor(currentScores.totalScore)} bg-clip-text`}>
@@ -479,7 +456,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                   </div>
                 </div>
 
-                {/* 详细分数 */}
                 <div className="space-y-3">
                   <div className="bg-slate-900/50 rounded-lg p-3">
                     <div className="flex justify-between items-center">
@@ -537,7 +513,6 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                   </div>
                 </div>
 
-                {/* 操作按钮区域 */}
                 <div className="border-t border-slate-700 pt-4 space-y-2">
                   <div className="text-green-400 text-sm mb-2 flex items-center">
                     <div className="w-2 h-2 bg-green-400 rounded-full mr-2"></div>
