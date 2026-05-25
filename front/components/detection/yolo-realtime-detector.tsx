@@ -65,6 +65,7 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
   const [isUploading, setIsUploading] = useState(false)
   const [cameraChoice, setCameraChoice] = useState<CameraChoice>({ mode: "default" })
   const [selectorOpen, setSelectorOpen] = useState(false)
+  const [calibration, setCalibration] = useState<{ calibrated: boolean; pixels_per_mm?: number } | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { addTreeData } = useDataTree()
   const { currentUser } = useAuth()
@@ -73,6 +74,23 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
   useEffect(() => {
     const stored = readCameraChoice()
     setCameraChoice(stored.mode === "default" ? envFallbackChoice() : stored)
+  }, [])
+
+  // 摄像头标定状态：只在挂载时拉一次。标定页保存后会触发后端 storage event，
+  // 不过当下场景里"先标定后跑检测"的流程不需要实时同步，重启检测页即可。
+  useEffect(() => {
+    let cancelled = false
+    fetch(`${API_ENDPOINTS.CALIBRATION_CURRENT}?camera_id=default`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!cancelled && data) setCalibration(data)
+      })
+      .catch(() => {
+        // 后端没起来不阻塞检测页
+      })
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   const startYOLODetection = async () => {
@@ -335,6 +353,23 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                   >
                     YOLO 离线 · 演示数据
                   </span>
+                )}
+                {calibration && (
+                  calibration.calibrated ? (
+                    <span
+                      className="px-2 py-0.5 text-xs rounded-full bg-green-500/20 text-green-300 border border-green-500/40"
+                      title="摄像头已标定，宽度 mm 为真实测量值"
+                    >
+                      ✓ 已标定 {calibration.pixels_per_mm?.toFixed(3)} px/mm
+                    </span>
+                  ) : (
+                    <span
+                      className="px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-300 border border-red-500/40"
+                      title="摄像头未标定，宽度 mm 是按假设画面高 15cm 的估算值，请先到设置标定"
+                    >
+                      未标定，宽度为估算值
+                    </span>
+                  )
                 )}
                 {isDetecting && (
                   <div className="flex items-center text-green-400 text-sm">

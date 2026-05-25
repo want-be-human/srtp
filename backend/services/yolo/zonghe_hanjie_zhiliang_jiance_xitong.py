@@ -122,7 +122,6 @@ class IntegratedWeldDetector:
         try:
             self.width_detector = PreciseWeldDetector(
                 debug=False,
-                image_height_cm=15.0,
                 pixels_per_mm=self.pixels_per_mm,
             )
             cal_note = "已标定" if self.pixels_per_mm else "未标定，走估算"
@@ -286,6 +285,11 @@ class IntegratedWeldDetector:
                 "debug_info": str(debug_info),
                 "detection_count": int(len(detections)),
                 "seam_theta": float(self.roi_tracker.last_theta),
+                "roi_bbox": (
+                    list(self.roi_tracker.last_bbox)
+                    if self.roi_tracker.last_bbox is not None else None
+                ),
+                "dropped_outside": int(dropped_outside),
                 "annotated_frame": results[0].plot()
                 if results[0].boxes is not None
                 else frame,
@@ -490,6 +494,9 @@ class IntegratedWeldDetector:
             "detections": results["defects"].get("detections", []),
             "detection_count": results["defects"].get("detection_count", 0),
             "debug_info": results["defects"].get("debug_info", ""),
+            "seam_theta": results["defects"].get("seam_theta", 0.0),
+            "roi_bbox": results["defects"].get("roi_bbox"),
+            "dropped_outside": results["defects"].get("dropped_outside", 0),
             "processing_time": time.time() - start_time,
         }
 

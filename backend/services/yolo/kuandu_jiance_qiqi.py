@@ -36,19 +36,29 @@ def _pick_best_row(row_brightness: np.ndarray, fusion_score: np.ndarray) -> int:
     return int(np.argmax(fusion_score))
 
 
+# 未标定兜底时的假设画面高度（cm），仅用于让宽度模块仍能跑出一个数；
+# 任何依赖 mm 数值的判定都必须先看返回 dict 里的 calibrated 标志。
+FALLBACK_IMAGE_HEIGHT_CM = 15.0
+
+
 class PreciseWeldDetector:
 
     def __init__(
         self,
         debug: bool = False,
-        image_height_cm: float = 15.0,
+        image_height_cm: Optional[float] = None,
         pixels_per_mm: Optional[float] = None,
     ):
         self.debug = debug
         # pixels_per_mm 来自摄像头标定，存在时直接用；为 None 时退回
         # "假设画面高度 = image_height_cm" 的旧估算，输出标记 calibrated=False
-        self.image_height_cm = image_height_cm
+        self.image_height_cm = image_height_cm if image_height_cm is not None else FALLBACK_IMAGE_HEIGHT_CM
         self.pixels_per_mm = pixels_per_mm
+        if pixels_per_mm is None:
+            print(
+                f"[WARN] PreciseWeldDetector 未标定：假设画面高度 {self.image_height_cm:.1f}cm 估算 mm，"
+                "结果带 calibrated=False；请走 /calibration 标定后才能当真实测量值用"
+            )
 
     def enhanced_weld_detection(
         self,

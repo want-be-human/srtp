@@ -476,7 +476,10 @@ def inference_loop():
                             "top_y": results.get("top_y"),
                             "bottom_y": results.get("bottom_y"),
                             "detection_count": detection_count,
-                            "debug_info": results.get("debug_info", "")
+                            "debug_info": results.get("debug_info", ""),
+                            "seam_theta": results.get("seam_theta", 0.0),
+                            "roi_bbox": results.get("roi_bbox"),
+                            "dropped_outside": results.get("dropped_outside", 0),
                         }
                     else:
                         import random
@@ -1032,6 +1035,27 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
                               font, 0.5, (0, 0, 255), 2)
                     cv2.putText(display_frame, f'Bottom: {bottom_y}', (10, bottom_y+20),
                               font, 0.5, (0, 0, 255), 2)
+
+                roi_bbox = current_detection_data.get("roi_bbox")
+                if roi_bbox and len(roi_bbox) == 4:
+                    rx1, ry1, rx2, ry2 = (int(v) for v in roi_bbox)
+                    roi_color = (0, 255, 255)
+                    dash_len = 12
+                    for x in range(rx1, rx2, dash_len * 2):
+                        cv2.line(display_frame, (x, ry1), (min(x + dash_len, rx2), ry1), roi_color, 2)
+                        cv2.line(display_frame, (x, ry2), (min(x + dash_len, rx2), ry2), roi_color, 2)
+                    for y in range(ry1, ry2, dash_len * 2):
+                        cv2.line(display_frame, (rx1, y), (rx1, min(y + dash_len, ry2)), roi_color, 2)
+                        cv2.line(display_frame, (rx2, y), (rx2, min(y + dash_len, ry2)), roi_color, 2)
+
+                    seam_theta_rad = current_detection_data.get("seam_theta", 0.0) or 0.0
+                    theta_deg = float(np.degrees(seam_theta_rad))
+                    dropped_outside = current_detection_data.get("dropped_outside", 0)
+                    cv2.putText(display_frame, f'ROI theta={theta_deg:+.1f} deg',
+                              (rx1, max(20, ry1 - 8)), font, 0.55, roi_color, 2)
+                    cv2.putText(display_frame, f'dropped outside ROI: {dropped_outside}',
+                              (rx1, min(display_frame.shape[0] - 8, ry2 + 22)),
+                              font, 0.55, roi_color, 2)
 
                 # 4. 绘制缺陷检测框
                 detections = current_detection_data.get("detected_defects", [])

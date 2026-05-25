@@ -37,6 +37,13 @@ export function CameraCalibrationCard() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   // displayScale = 画布显示宽 / 原图宽，回算点击像素时还原到原图坐标
   const displayScaleRef = useRef<number>(1)
+  // 跟随光标的放大镜状态：display 是画布上像素位（用于定位 div），image 是原图像素位（用于读数）
+  const [hover, setHover] = useState<{
+    displayX: number
+    displayY: number
+    imageX: number
+    imageY: number
+  } | null>(null)
 
   const loadStatus = async () => {
     try {
@@ -119,6 +126,22 @@ export function CameraCalibrationCard() {
     setPoints((prev) => (prev.length >= 2 ? [{ x, y }] : [...prev, { x, y }]))
   }
 
+  const onCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!snapshot) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const xDisp = e.clientX - rect.left
+    const yDisp = e.clientY - rect.top
+    const scale = displayScaleRef.current || 1
+    setHover({
+      displayX: xDisp,
+      displayY: yDisp,
+      imageX: Math.round(xDisp / scale),
+      imageY: Math.round(yDisp / scale),
+    })
+  }
+
+  const onCanvasMouseLeave = () => setHover(null)
+
   const pixelDistance = points.length === 2
     ? Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y)
     : 0
@@ -173,6 +196,9 @@ export function CameraCalibrationCard() {
               <div className="text-xs text-gray-400 mt-1">
                 {status.pixels_per_mm?.toFixed(3)} px/mm · 参考 {status.ref_distance_mm}mm
                 {status.image_width ? ` · 分辨率 ${status.image_width}×${status.image_height}` : ""}
+                {status.calibrated_at
+                  ? ` · 标定时间 ${new Date(status.calibrated_at).toLocaleString()}`
+                  : ""}
               </div>
             ) : (
               <div className="text-xs text-yellow-400 mt-1">未标定，宽度 mm 值为估算</div>
@@ -203,16 +229,48 @@ export function CameraCalibrationCard() {
 
         {snapshot && (
           <div className="space-y-3">
-            <div className="overflow-auto bg-black/40 rounded">
+            <div className="overflow-auto bg-black/40 rounded relative">
               <canvas
                 ref={canvasRef}
                 onClick={onCanvasClick}
+                onMouseMove={onCanvasMouseMove}
+                onMouseLeave={onCanvasMouseLeave}
                 className="cursor-crosshair block"
               />
+              {hover && (
+                <div
+                  className="absolute pointer-events-none border-2 border-cyan-400 rounded shadow-lg"
+                  style={{
+                    width: 80,
+                    height: 80,
+                    // 默认放右上，靠近边缘时翻到另一侧避免越界
+                    left:
+                      hover.displayX + 96 > (canvasRef.current?.width ?? 0)
+                        ? hover.displayX - 96
+                        : hover.displayX + 16,
+                    top: hover.displayY - 96 < 0 ? hover.displayY + 16 : hover.displayY - 96,
+                    backgroundImage: `url(${snapshot.dataUrl})`,
+                    backgroundRepeat: "no-repeat",
+                    // 原图按 4× 放大铺底，再用负偏移把光标处的像素挪到 80×80 中心
+                    backgroundSize: `${snapshot.width * 4}px ${snapshot.height * 4}px`,
+                    backgroundPosition: `${40 - hover.imageX * 4}px ${40 - hover.imageY * 4}px`,
+                  }}
+                >
+                  <div
+                    className="absolute left-1/2 top-1/2 w-px h-4 bg-cyan-400"
+                    style={{ transform: "translate(-50%, -50%)" }}
+                  />
+                  <div
+                    className="absolute left-1/2 top-1/2 h-px w-4 bg-cyan-400"
+                    style={{ transform: "translate(-50%, -50%)" }}
+                  />
+                </div>
+              )}
             </div>
             <div className="text-xs text-gray-400">
               已点 {points.length}/2 点
               {points.length === 2 && ` · 像素距离 ${pixelDistance.toFixed(1)} px`}
+              {hover && ` · 光标 (${hover.imageX}, ${hover.imageY})`}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-sm">参考物真实长度</span>
