@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Home, Settings, User, Activity, TrendingUp, Database, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut, Trophy } from "lucide-react"
 import Image from "next/image"
 import { API_ENDPOINTS } from "@/lib/api"
+import { getPredictionCacheKey, getRadarCacheKey } from "@/lib/storage"
 import { useAuth } from "@/contexts/AuthContext"
 import { LessonPlanExportContent } from "../components/lesson-plan/lesson-plan-export"
 import { AITeacherChatContent } from "../components/ai-teacher/ai-teacher-chat"
@@ -57,6 +58,33 @@ export default function WeldingDetectionSystem() {
   useEffect(() => {
     router.prefetch("/login")
   }, [router])
+
+  // 登录后立刻在后台预取智能预测页要用的两份数据，结果写 localStorage。
+  // 用户切到"智能预测"模块时 prediction-dashboard 会先从 localStorage 读出来
+  // 立即渲染，不用等服务端 50-200ms 的聚合查询。AI 分析远程接口太慢不预取。
+  useEffect(() => {
+    const sid = currentUser?.student_id
+    if (!sid) return
+    const q = `?student_id=${encodeURIComponent(sid)}`
+    fetch(`${API_ENDPOINTS.PREDICT}${q}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return
+        const key = getPredictionCacheKey(sid)
+        localStorage.setItem(key, JSON.stringify(data))
+        localStorage.setItem(`${key}:time`, Date.now().toString())
+      })
+      .catch(() => {
+        // 后端没起来不阻塞登录后进入
+      })
+    fetch(`${API_ENDPOINTS.PREDICT_AI_RADAR}${q}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (!data) return
+        localStorage.setItem(getRadarCacheKey(sid), JSON.stringify(data))
+      })
+      .catch(() => {})
+  }, [currentUser?.student_id])
 
   const handleLogout = () => {
     logout()

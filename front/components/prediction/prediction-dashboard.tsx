@@ -4,7 +4,7 @@ import React, { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from "recharts"
 import { API_ENDPOINTS } from "@/lib/api"
-import { getPredictionCacheKey } from "@/lib/storage"
+import { getPredictionCacheKey, getRadarCacheKey } from "@/lib/storage"
 import { useAuth } from "@/contexts/AuthContext"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
 
@@ -235,10 +235,24 @@ function AIOutputBox({ aiAnalysis }: { aiAnalysis?: any }) {
   )
 }
 
+// 顶层 page.tsx 登录后会把 /predict/ai-radar-data 结果写到 localStorage，进入页面时
+// 用这个初始化函数同步读出来立即渲染雷达，不必等首次 fetch 回来再画。
+function readRadarFromCache(studentId: string | null): RadarData | null {
+  if (typeof window === "undefined") return null
+  try {
+    const raw = window.localStorage.getItem(getRadarCacheKey(studentId))
+    return raw ? (JSON.parse(raw) as RadarData) : null
+  } catch {
+    return null
+  }
+}
+
 export function PredictionDashboardContent() {
   const { currentUser } = useAuth()
   const [predictionData, setPredictionData] = useState<PredictionData | null>(null)
-  const [radarData, setRadarData] = useState<RadarData | null>(null)
+  const [radarData, setRadarData] = useState<RadarData | null>(() =>
+    readRadarFromCache(currentUser?.student_id ?? null)
+  )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [aiAnalysis, setAiAnalysis] = useState<any>(null)
@@ -305,7 +319,10 @@ export function PredictionDashboardContent() {
           fetch(`${API_ENDPOINTS.PREDICT_AI_RADAR}${studentQuery}`)
             .then(async (r) => {
               if (!r.ok) return
-              setRadarData(await r.json())
+              const data = await r.json()
+              setRadarData(data)
+              // 同步写回 localStorage，让下次进入页面（甚至下一次登录）也能瞬间出图
+              localStorage.setItem(getRadarCacheKey(studentId), JSON.stringify(data))
             })
             .catch((e) => {
               console.warn("获取雷达数据失败:", e)

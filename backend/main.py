@@ -45,6 +45,28 @@ app = FastAPI(
     version="2.1.0",
 )
 
+
+@app.on_event("startup")
+async def _warm_load_temporal_model() -> None:
+    """启动时把 1D-CNN 的 .pt 提前 load 进 _model_cache，深度预测首请求不用 lazy train。
+
+    成本约 8KB IO + 一次 state_dict 反序列化，毫秒级。trained_on_count 留 0，让
+    第一个 deep 请求像 lazy-load 路径一样把 baseline 设到当时的 n；之后累计 +30
+    新数据才触发 retrain（保留 data-drift 跟随能力）。失败也只是退化到首请求
+    lazy train，不阻塞启动。
+    """
+    try:
+        from services.prediction.temporal_model import _load_pretrained, _model_cache
+        model = _load_pretrained()
+        if model is not None:
+            _model_cache["model"] = model
+            # trained_on_count 保持 0，首请求会按"n - 0 < 30"判断（单生 22 条命中）
+            print("[OK] startup: 1D-CNN .pt 已 warm-load，深度预测首请求 < 200ms")
+        else:
+            print("[INFO] startup: 未找到 .pt 权重文件，深度预测首请求会走 lazy train")
+    except Exception as exc:
+        print(f"[WARN] startup: 1D-CNN warm-load 失败（不阻塞启动）: {exc}")
+
 # 配置CORS
 app.add_middleware(
     CORSMiddleware,

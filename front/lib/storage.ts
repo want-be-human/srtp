@@ -9,11 +9,17 @@ export const StorageKey = {
   AUTH_USER: `${NS}auth_user`,
   DATA_TREE: `${NS}data_tree`,
   PREDICTION_CACHE: `${NS}prediction_cache`,
+  RADAR_CACHE: `${NS}radar_cache`,
 } as const
 
 /** 按学生分桶的预测缓存 key，没有学生时落到 guest 槽 */
 export function getPredictionCacheKey(studentId?: string | null): string {
   return `${StorageKey.PREDICTION_CACHE}:${studentId || "guest"}`
+}
+
+/** 雷达数据缓存 key，给智能预测页和登录后顶层 prefetch 共用 */
+export function getRadarCacheKey(studentId?: string | null): string {
+  return `${StorageKey.RADAR_CACHE}:${studentId || "guest"}`
 }
 
 export function getJSON<T>(key: string, fallback: T): T {
