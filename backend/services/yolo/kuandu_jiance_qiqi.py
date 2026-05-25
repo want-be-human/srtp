@@ -21,7 +21,7 @@ def _pick_best_row(row_brightness: np.ndarray, fusion_score: np.ndarray) -> Tupl
     """按 fusion_score 降序找第一个通过暗-亮-暗连续性的行；都没过就退回最亮行。
 
     返回 (best_y, rejected_count)。rejected_count 是被暗-亮-暗筛掉的候选数，
-    透传到 MJPEG 角标可视化，评委一眼看出"拟态过滤"在干活。
+    透传到 MJPEG 角标可视化，方便观察拟态过滤的实际工作量。
     """
     region_height = len(row_brightness)
     if region_height < 2 * _FAR_OFFSET + 1:

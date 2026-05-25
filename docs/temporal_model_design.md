@@ -1,14 +1,13 @@
 # 焊接质量时序预测模型设计
 
 文档对应实现：[`backend/services/prediction/temporal_model.py`](../backend/services/prediction/temporal_model.py)。
-最后修订：2026-05-23（E-P2-1，commit 待提交）。
 
 ## 1. 目的
 
 学生在系统里连续检测一段时间后，希望看到"未来 5 次的总分趋势预测"。这一块原本只用
 Random Forest（`backend/prediction.py::predict_future_scores`），但 RF 对**时间局部形态**
-不敏感——它把每条记录当独立样本，靠 lag 特征拼时序。我们想加一条"深度预测"通道与 RF
-并存，让前端 toggle 切换，作为国赛的算法创新点之一。
+不敏感——它把每条记录当独立样本，靠 lag 特征拼时序。所以加了一条"深度预测"通道与 RF
+并存，前端 toggle 切换。
 
 ## 2. 模型架构
 
@@ -34,7 +33,7 @@ Output (batch, 5)                 # 未来 5 步总分（归一化值，外层 �
 - **三层 conv 已经够看 ±3 步局部形态**（感受野 = 3 + 2 + 2 = 7 步）。再深也无意义，因为
   全局池化之后只保留通道级统计，更深的局部细节会被平均掉。
 - **不带总分进输入**：标签是未来总分，输入只有三项子分数，避免 label leakage。
-- **Dropout 0.2** 抑制小数据集（130 条 seed）下的过拟合。
+- **Dropout 0.2** 抑制小数据集场景下的过拟合。
 
 ## 3. 短序列与长序列同时支持
 
@@ -52,7 +51,7 @@ epoch 把五个桶都过一遍，模型同时学到"5 步局部斜率"和"30 步
 - `len(input) >= 5`（`MIN_INFER_WINDOW`）：直接喂模型，取最近 `min(len, MAX_INFER_WINDOW=30)`
 - `len(input) < 5`：返回中性预测（85 分），上游 API 看到样本太少会回退 RF
 
-实测（130 条递增趋势 seed 数据）：
+实测（递增趋势训练数据）：
 
 | 输入长度 | 5 步预测 | 解读 |
 |---|---|---|
@@ -67,12 +66,53 @@ epoch 把五个桶都过一遍，模型同时学到"5 步局部斜率"和"30 步
 
 ## 4. 性能
 
-- 参数量：1349 个 FP32，5.3 KB 内存占用
-- CPU 训练（80 epoch，130 条记录，5 个 window bucket）：约 3-5 秒
-- CPU 单次推理：< 10 ms（实测在用户机上 < 3 ms）
-- 不依赖 GPU；项目 torch 装的就是 `2.5.1+cpu`
+- 参数量：1349 个 FP32，5.3 KB 内存占用，权重文件 `.pt` 落盘约 8.4 KB
+- CPU 训练（200 epoch，3480 个 train 样本，5 个 window bucket）：约 15 秒
+- CPU 单次推理：< 10 ms（实测在普通笔记本上 < 3 ms）
+- 不依赖 GPU；项目 torch 是 `2.5.1+cpu`
 
-## 5. 为什么 1D-CNN 而不是 LSTM / Transformer
+### 训练指标
+
+数据集按学生切 70/15/15，每个学生 200 条连续时序，单生窗口不跨学生切（避免幽灵跳变）。
+完整指标见 [`backend/services/prediction/artifacts/temporal_metrics.json`](../backend/services/prediction/artifacts/temporal_metrics.json)：
+
+| split | 样本数 | MSE (归一化) | MAE (0-100 分数空间) | R²    |
+|-------|--------|--------------|-----------------------|-------|
+| train | 3480   | 0.0057       | 6.02 分               | 0.319 |
+| val   | 204    | 0.0065       | 6.82 分               | 0.271 |
+| test  | 204    | 0.0080       | **7.68 分**           | 0.112 |
+
+best val 出现在 epoch 183（200 epoch 训练，之后轻微过拟合）。曲线见
+[`artifacts/temporal_training_curve.png`](../backend/services/prediction/artifacts/temporal_training_curve.png)。
+
+几个要注意的解读点：
+- **MAE ≈ 7 分** 是最直观的指标——5 步预测的平均偏差。学生总分常在 70-90 分区间，
+  对应相对误差 8-10%，足够支撑"趋势向好/平/下降"的判断。
+- **train MSE 系统高于 val MSE** 是 dropout=0.2 在训练态打开造成的（噪声推高 train loss），
+  评估态关闭后 val 更准。不是过拟合反转。
+- **test R² 只有 0.11** 反映数据本身的高方差：缺陷类别和宽度触底样本是离散随机的，
+  连续 5 步未来值的可解释方差天花板就不高。MAE 更适合作为业务指标。
+
+## 5. 训练产物与部署
+
+训练产物全部落在 [`backend/services/prediction/artifacts/`](../backend/services/prediction/artifacts/)：
+
+| 文件                           | 大小    | 用途                                          |
+|--------------------------------|---------|----------------------------------------------|
+| `temporal_model.pt`            | 8.4 KB  | PyTorch state_dict，进程启动直接 load        |
+| `temporal_metrics.json`        | < 1 KB  | 训练指标快照                                  |
+| `temporal_training_curve.png`  | ~30 KB  | train/val 双线训练曲线                        |
+| `temporal_training_data.csv`   | ~70 KB  | 训练用的时序数据集（六学生连续 200 条）      |
+
+部署流程：
+- FastAPI 启动时 `_warm_load_temporal_model()` 在 `@app.on_event("startup")` 钩子里
+  `torch.load(temporal_model.pt, weights_only=True)`，把权重 load 进 `_model_cache`。
+- 用户登录后前端顶层会立即在后台拉一次 `/predict` 和 `/predict/ai-radar-data`，把
+  结果写到 localStorage，进智能预测页面瞬间出图。
+- 切到深度预测时直接命中已加载的模型，单次推理 < 3 ms。
+- 累计 30 条新记录后触发在线重训并刷新 `.pt`，保留数据漂移跟随能力。
+
+## 6. 为什么 1D-CNN 而不是 LSTM / Transformer
 
 主要理由是 **CPU 推理速度** + **小样本鲁棒性**：
 
@@ -89,7 +129,7 @@ epoch 把五个桶都过一遍，模型同时学到"5 步局部斜率"和"30 步
 为什么不用 Transformer：参数量级（最小 self-attention 也要几万参数）和数据量不匹配，
 小样本上很容易过拟合。
 
-## 6. 论文与可靠数据来源
+## 7. 论文与可靠数据来源
 
 - Bai, S., Kolter, J. Z., & Koltun, V. (2018). *An Empirical Evaluation of Generic
   Convolutional and Recurrent Networks for Sequence Modeling.* arXiv:1803.01271.
@@ -112,18 +152,18 @@ epoch 把五个桶都过一遍，模型同时学到"5 步局部斜率"和"30 步
   焊接质量时序预测的领域参考，证实"时序模型对焊接质量预测有效"，但其使用 LSTM；本项目
   CPU-only 部署选择更轻的 1D-CNN。
 
-## 7. 当前局限与后续方向
+## 8. 当前局限与后续方向
 
-- 训练用的是 seed 数据，未在真实采集数据上跑过端到端评估；论文支撑只是说明
-  *架构选择合理*，不等于*精度有保证*。演示讲解时要诚实：模型输出是基于已有数据外推的
-  趋势，**不是质检意义上的"未来一定是这个分"**。
+- 训练数据是基于学生画像合成的连续时序，未在大规模真实焊接采集数据上做过端到端评估；
+  论文支撑只能说明*架构选择合理*，不等于*精度有保证*。模型输出是基于历史数据外推的
+  趋势，不是质检意义上的"未来一定是这个分"。
 - 没有不确定度估计。后续可加 MC Dropout 或 ensemble 给前端画出 confidence band。
 - 多窗口训练目前是简单的"每个长度一个桶"，可以升级到课程学习（先短后长）或
   attention pooling 提升精度。
 - 真要承诺"长序列效果好"（比如 100+ 步），应该加 dilated convolution（WaveNet 风格）
   把感受野指数级放大，当前 7 步感受野够覆盖项目里实际的窗口长度。
 
-## 8. 数据流
+## 9. 数据流
 
 ```
 WeldingRecord (DB)

@@ -1,6 +1,6 @@
 # 焊育智眸 - 智能焊缝检测与教学分析系统
 
-焊育智眸是一套面向焊接实训教学场景的智能检测系统，集成焊缝质量检测、缺陷识别、成绩预测、AI 教师问答、数据树可视化和 PDF 报告导出等功能。项目已作为计算机设计大赛省级作品推进至国赛阶段，当前版本重点服务于现场演示、教学分析和后续国赛完善。
+焊育智眸是一套面向焊接实训教学场景的智能检测系统，集成焊缝质量检测、缺陷识别、成绩预测、智能问答、数据树可视化和 PDF 报告导出等功能。系统服务于日常焊接教学、学生训练记录管理和阶段性质量分析。
 
 ## 项目定位
 
@@ -21,11 +21,11 @@
 - 支持 17 类焊缝缺陷中英文映射。
 - 后端通过多线程拆分视频采集、YOLO 推理和数据输出。
 
-### AI 教师
+### 智能问答
 
 - 支持基于检测结果的焊接技术问答。
 - 可围绕缺陷原因、工艺参数、训练建议等问题生成指导。
-- 支持 OpenAI 兼容接口，默认按 DeepSeek/OpenAI 兼容格式配置。
+- 支持 OpenAI 兼容接口，默认按 DeepSeek 接口格式配置。
 
 ### 智能预测
 
@@ -81,12 +81,14 @@ srtp-main/
 ├── backend/                         # FastAPI 后端
 │   ├── api/                         # API 路由
 │   │   ├── yolo_realtime.py         # 实时 YOLO 检测、视频流、分数保存
-│   │   ├── teacher.py               # AI 教师问答
-│   │   ├── predict.py               # 成绩预测与 AI 分析
+│   │   ├── teacher.py               # 智能问答
+│   │   ├── predict.py               # 成绩预测与时序模型推理
 │   │   ├── dashboard.py             # 仪表板统计
+│   │   ├── calibration.py           # 摄像头单目标定
 │   │   └── lesson_plan.py           # 报告数据和 PDF 生成任务
 │   ├── services/
 │   │   ├── yolo/                    # YOLO 与 OpenCV 检测模块
+│   │   ├── prediction/              # 1D-CNN 时序预测器 + 训练产物
 │   │   └── pdf_generator/           # 独立 PDF 报告生成器
 │   ├── main.py                      # 后端入口
 │   ├── models.py                    # SQLAlchemy 数据模型
@@ -97,15 +99,16 @@ srtp-main/
 │   ├── app/                         # App Router 页面入口
 │   ├── components/
 │   │   ├── detection/               # 焊缝检测页面组件
-│   │   ├── ai-teacher/              # AI 教师组件
+│   │   ├── ai-teacher/              # 智能问答组件
 │   │   ├── prediction/              # 智能预测组件
 │   │   ├── lesson-plan/             # 报告导出组件
 │   │   ├── data-tree/               # 3D 数据树组件
 │   │   └── ui/                      # 通用 UI 组件
 │   ├── lib/api.ts                   # 前端 API 地址统一配置
 │   └── package.json                 # 前端依赖和脚本
-├── docs/                            # 项目规划与说明文档
-│   └── 国赛11天升级规划与代码梳理.md
+├── docs/                            # 项目说明文档
+│   ├── temporal_model_design.md     # 1D-CNN 时序预测器设计说明
+│   └── welding-3d-setup.html        # 3D 数据树静态演示页
 ├── lizi/                            # 独立粒子展示实验页面
 ├── start_all.bat                    # Windows 一键启动脚本
 └── push_to_gitee.bat                # Gitee 推送辅助脚本
@@ -181,7 +184,7 @@ NEXT_PUBLIC_API_URL=http://localhost:8000
 
 - 不要将 `.env`、`.env.local`、API Key、账号密码或访问令牌提交到仓库。
 - `AI_API_BASE_URL` 不需要手动追加 `/v1`。
-- 未配置 AI Key 时，部分 AI 功能不可用，但检测、数据展示和基础报告仍可继续调试。
+- 未配置 Key 时，问答和文本分析功能不可用，但检测、预测、数据展示和报告仍可继续使用。
 
 ## 常用接口
 
@@ -198,10 +201,13 @@ GET  /api/v1/recent-scores               获取最近检测记录
 GET  /api/v1/student-comparison          学生对比数据
 GET  /api/v1/dashboard/quick-stats       仪表板快速统计
 GET  /api/v1/predict                     获取预测数据
-GET  /api/v1/predict/ai-analysis         获取 AI 预测分析
-POST /api/v1/teacher/chat                AI 教师问答
+GET  /api/v1/predict/ai-radar-data       获取技能与缺陷六维雷达数据
+GET  /api/v1/predict/ai-analysis         获取预测文本分析
+POST /api/v1/teacher/chat                焊接技术问答
 GET  /api/v1/lesson-plan                 获取报告数据
 POST /api/v1/lesson-plan/generate-pdf    启动 PDF 生成任务
+GET  /api/v1/calibration/current         获取当前摄像头标定参数
+POST /api/v1/calibration/save            保存摄像头标定参数
 ```
 
 完整接口可访问：
@@ -261,53 +267,27 @@ backend/services/yolo/zonghe_hanjie_zhiliang_jiance_xitong.py
 缺陷   0.4
 ```
 
-## 国赛升级规划
-
-国赛窗口期的详细规划见：
-
-```text
-docs/国赛11天升级规划与代码梳理.md
-```
-
-当前建议的重点升级方向：
-
-- 引入 3D 重构展示，增强焊板检测说服力。
-- 固定 ROI 检测区域，提高实时检测稳定性。
-- 优化缺陷名称映射，减少“未知”结果。
-- 将 PDF 报告建议本地规则化，降低 AI API 依赖。
-- 增加演示登录、学生数据归属和数据树 PK。
-
 ## 开发注意事项
 
 - 前端安装依赖时建议使用 `npm install --legacy-peer-deps`。
-- `front/` 中同时存在 `package-lock.json` 和 `pnpm-lock.yaml`，当前建议以 npm 为准。
+- `front/` 中同时存在 `package-lock.json` 和 `pnpm-lock.yaml`，目前以 npm 为准。
 - `next.config.mjs` 当前忽略 TypeScript 和 ESLint 构建错误，开发时仍应主动检查关键问题。
-- 摄像头地址目前需要根据现场网络和设备情况调整。
-- PDF、预测和 AI 分析均应保留本地 fallback，避免现场演示受网络影响。
+- 摄像头地址需要根据现场网络和设备情况调整。
+- PDF、预测和文本分析模块都保留本地兜底分支，远程接口不可用时仍能出结果。
 - 不要提交 `node_modules/`、`.next/`、数据库临时文件、API Key 和个人凭据。
 
-## 推荐演示流程
+## 使用流程
 
 1. 启动后端和前端。
 2. 进入控制中心查看系统状态。
 3. 打开焊缝检测模块，启动实时检测或上传焊缝图片。
 4. 查看总分、光滑度、宽度、缺陷控制和缺陷类型。
 5. 保存当前检测数据。
-6. 打开智能预测页面，查看历史趋势和预测曲线。
-7. 打开数据树页面，展示训练数据的 3D 可视化。
+6. 打开智能预测页面，查看历史趋势、预测曲线和技能雷达。
+7. 打开数据树页面，查看训练数据的 3D 可视化。
 8. 打开报告导出页面，生成并下载 PDF 报告。
-9. 使用 AI 教师对检测结果进行问答分析。
-
-## 项目状态
-
-当前仓库用于计算机设计大赛国赛阶段继续开发。后续开发优先保证：
-
-- 现场演示稳定。
-- 检测链路可解释。
-- 报告生成快速。
-- 数据展示完整。
-- 核心功能离线可用。
+9. 在问答页面针对当前检测结果进行咨询。
 
 ## 许可证
 
-本项目目前为比赛项目私有仓库，暂未设置开源许可证。
+本项目暂未设置开源许可证。

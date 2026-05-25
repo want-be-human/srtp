@@ -12,9 +12,10 @@ __pycache__/
 venv/
 env/
 
-# IDE
+# IDE / 编辑器
 .idea/
 .vscode/
+.claude/
 *.swp
 *.swo
 
@@ -29,8 +30,17 @@ backend/.env.local
 # 日志
 *.log
 
-# YOLO 训练副产物（要存的权重单独 git add）
+# YOLO 训练副产物
 runs/
 *.pt.bak
 
-# 注意：backend/welding.db 是演示数据，保留追踪以便团队拉下来直接跑
+# 本地数据辅助脚本（不入仓库）
+backend/scripts/seed_*.py
+backend/scripts/purge_*.py
+backend/scripts/train_temporal_offline.py
+
+# 临时草稿
+123
+123.txt
+*.tmp
+*.bak

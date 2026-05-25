@@ -108,7 +108,7 @@ function AutoScrollLessonPlan({ plans, interval = 5000 }: { plans: any[]; interv
   )
 }
 
-// 这两张卡片里的文案是写死的示例数据，等接入后端规则库后会替换；徽标提醒评委别当真
+// 两张卡片里的文案是写死的示例数据，等接入后端规则库后会替换；徽标标注"示例文案"
 const MockBadge = () => (
   <div className="absolute top-3 right-3 z-10">
     <span

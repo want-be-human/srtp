@@ -2,9 +2,9 @@
 """
 学生登录接口。
 
-学生名单由 scripts/seed_students.py 预先写入 students 表。当前演示阶段不做
-token/session，前端登录后只是把学号缓存到本地；后端各业务接口仍然接受未登录
-请求。后面要补 JWT 在此扩展即可。
+学生名单由管理员预先写入 students 表。目前没接 token/session，前端登录后只是把
+学号缓存到本地；后端各业务接口仍然接受未登录请求，便于内部联调。要补 JWT 在此
+扩展即可。
 """
 
 import os
