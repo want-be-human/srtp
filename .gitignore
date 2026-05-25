@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统
+.DS_Store
+Thumbs.db
+
+# 后端环境配置
+backend/.env
+backend/.env.local
+
+# 日志
+*.log
+
+# YOLO 训练副产物（要存的权重单独 git add）
+runs/
+*.pt.bak
+
+# 注意：backend/welding.db 是演示数据，保留追踪以便团队拉下来直接跑
