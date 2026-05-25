@@ -24,6 +24,9 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 _DOCS_DIR = _REPO_ROOT / "docs"
 _CURVE_PATH = _DOCS_DIR / "temporal_training_curve.png"
 _METRICS_PATH = _DOCS_DIR / "temporal_metrics.json"
+# state_dict 文件路径：每层 weight + bias 的 tensor 序列化结果。
+# 进程启动时 _load_pretrained() 先尝试 load 它当作初始权重，跳过冷启动 train。
+_WEIGHTS_PATH = _DOCS_DIR / "temporal_model.pt"
 
 
 # 预测的步数
@@ -166,6 +169,10 @@ def _dump_training_artifacts(
         ss_tot = float(np.sum((t - t.mean()) ** 2)) if t.size else 0.0
         r2_train = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
 
+        # 把 state_dict（每层 weight + bias 的 tensor）落盘成 .pt，跟 metrics 同步刷新；
+        # 进程重启或别的脚本评估都可 `torch.load(_WEIGHTS_PATH)` 拿回这次训练的权重。
+        torch.save(model.state_dict(), _WEIGHTS_PATH)
+
         metrics = {
             "trained_at": datetime.now().isoformat(timespec="seconds"),
             "sample_count": sample_count,
@@ -176,6 +183,7 @@ def _dump_training_artifacts(
             "feature_dim": FEATURE_DIM,
             "forecast_size": FORECAST_SIZE,
             "windows": list(TRAIN_WINDOWS),
+            "weights_path": str(_WEIGHTS_PATH.relative_to(_REPO_ROOT)).replace("\\", "/"),
         }
         _METRICS_PATH.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -220,14 +228,44 @@ _model_lock = threading.Lock()
 _model_cache = {"model": None, "trained_on_count": 0}
 
 
+def _load_pretrained() -> Optional[WeldTemporalCNN]:
+    """有 docs/temporal_model.pt 就 load 当冷启动权重，跳过首请求等训练。"""
+    if not _WEIGHTS_PATH.exists():
+        return None
+    try:
+        model = WeldTemporalCNN()
+        # weights_only=True 让 torch 只反序列化 tensor，不执行任意 pickle，安全得多；
+        # 也消掉 torch 2.5+ 的 FutureWarning，2.6 之后会默认 True。
+        state = torch.load(_WEIGHTS_PATH, map_location="cpu", weights_only=True)
+        model.load_state_dict(state)
+        model.eval()
+        logger.info(f"已加载预训练权重 {_WEIGHTS_PATH}")
+        return model
+    except Exception as e:
+        logger.warning(f"加载 {_WEIGHTS_PATH} 失败，退回 lazy train: {e}")
+        return None
+
+
 def get_or_train(records: Sequence) -> Optional[WeldTemporalCNN]:
     """单例 + 数据漂移触发重训：新增 >= RETRAIN_DELTA 条记录就重新拟合一次。
+
+    冷启动优先 load 离线训练的 .pt，让首次 deep 预测不用等 lazy train。
 
     n 在锁外读取是安全的，因为 trained_on_count 只单调增长，并发 caller 看到的总是合法快照。
     """
     n = len(records)
     with _model_lock:
         cached = _model_cache["model"]
+        # 进程首次进来 cached 必然为 None，先试 load .pt 当 warm start
+        if cached is None:
+            pretrained = _load_pretrained()
+            if pretrained is not None:
+                _model_cache["model"] = pretrained
+                # 把 trained_on_count 设到当前 n，让 RETRAIN_DELTA 计数从这里起步；
+                # 不能设 0，否则首请求带 130 条立刻触发重训，white .pt 等于白 load
+                _model_cache["trained_on_count"] = n
+                return pretrained
+
         trained_n = _model_cache["trained_on_count"]
         if cached is not None and (n - trained_n) < RETRAIN_DELTA:
             return cached

@@ -11,6 +11,8 @@ production 拿单学生 18-25 条切窗口只能产十几个样本，曲线噪�
     python scripts/train_temporal_offline.py
 
 产物：
+    docs/temporal_model.pt             PyTorch state_dict，5.3 KB；production 启动
+                                       时 _load_pretrained() 直接 load 它 warm start
     docs/temporal_training_curve.png   train vs val 双曲线 + best epoch 竖线
     docs/temporal_metrics.json         train/val/test 三套 MSE / MAE / R² + 模型参数量
     docs/temporal_training_data.csv    6 学生 × 200 条合成时序，列：student_id /
@@ -60,6 +62,9 @@ METRICS_PATH = DOCS_DIR / "temporal_metrics.json"
 # 训练集物理落盘路径——评委追问"扩充的数据在哪"可直接打开 csv 复审，
 # 不写回 welding.db 避免污染演示叙事（demo 仍是 ~155 条真实演示历史）。
 DATASET_PATH = DOCS_DIR / "temporal_training_data.csv"
+# 训练完成后落盘的 PyTorch state_dict——production 启动时 _load_pretrained() 来 load 它，
+# 跳过冷启动的 lazy train，等于把这次离线训练的权重直接部署到线上。
+WEIGHTS_PATH = DOCS_DIR / "temporal_model.pt"
 
 
 def generate_student_rows(profile: dict, n: int, seed: int) -> list:
@@ -232,6 +237,13 @@ def main():
               f"MSE={m['mse']:.5f}  MAE={m['mae_score']:.2f}fen  R2={m['r2']:.4f}")
 
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # 把训练后的 state_dict 落盘成 .pt——这才是"训练产物"的核心。production 启动
+    # 时 services/prediction/temporal_model._load_pretrained() 会读这个文件做 warm start。
+    torch.save(model.state_dict(), WEIGHTS_PATH)
+    weights_size_kb = WEIGHTS_PATH.stat().st_size / 1024
+    print(f"权重已写 {WEIGHTS_PATH} ({weights_size_kb:.2f} KB)")
+
     metrics = {
         "trained_at": datetime.now().isoformat(timespec="seconds"),
         "students": [p["sid"] for p in PROFILES],
@@ -251,9 +263,11 @@ def main():
         "val": val_metrics,
         "test": test_metrics,
         "model_params": int(sum(p.numel() for p in model.parameters())),
+        "weights_path": str(WEIGHTS_PATH.relative_to(Path(backend_dir).parent)).replace("\\", "/"),
+        "weights_size_kb": round(weights_size_kb, 2),
     }
     METRICS_PATH.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"\n指标已写 {METRICS_PATH}")
+    print(f"指标已写 {METRICS_PATH}")
 
     try:
         import matplotlib

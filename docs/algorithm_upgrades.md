@@ -367,18 +367,97 @@ DB 历史（~22 条）。这条路径**有意保留小数据 fine-tune 的灵活
 是给"长期使用后数据积累上来"的场景用，演示当天则用 RF 兜底（mode=fast）。
 本节的离线脚本是**评委追问"训练曲线和指标在哪"的标准答案**，跟线上路径解耦。
 
+**训练产物（部署 / 推理用的核心文件）**：
+
+| 文件                                 | 大小      | 用途                                                            |
+|--------------------------------------|-----------|-----------------------------------------------------------------|
+| [docs/temporal_model.pt](./temporal_model.pt) | **8.39 KB** | **PyTorch state_dict**——`{layer_name: tensor}` 的字典序列化结果；这才是"训练出来的模型"，进程加载它就能直接推理 |
+| [docs/temporal_metrics.json](./temporal_metrics.json) | < 1 KB    | 训练指标快照（含 `weights_path` 字段指向 .pt 相对路径）          |
+| [docs/temporal_training_curve.png](./temporal_training_curve.png) | ~30 KB    | 训练曲线，答辩 PPT 直接贴                                       |
+| [docs/temporal_training_data.csv](./temporal_training_data.csv) | ~70 KB    | 1200 行训练集，可审计可复现                                     |
+
+`.pt` 文件等价于 YOLO 模型的 `best.pt` / `last.pt`，只不过本模型只有 1349 参数，所以 8.39 KB 而不是几十 MB。内部存储格式（`torch.save` 默认走 zipfile + pickle）：
+
+```python
+{
+  "conv1.weight": Tensor(shape=[8, 3, 3]),     # 72 floats
+  "conv1.bias":   Tensor(shape=[8]),           # 8 floats
+  "conv2.weight": Tensor(shape=[16, 8, 3]),    # 384 floats
+  "conv2.bias":   Tensor(shape=[16]),          # 16 floats
+  "conv3.weight": Tensor(shape=[16, 16, 3]),   # 768 floats
+  "conv3.bias":   Tensor(shape=[16]),          # 16 floats
+  "fc.weight":    Tensor(shape=[5, 16]),       # 80 floats
+  "fc.bias":      Tensor(shape=[5]),           # 5 floats
+}  # 合计 1349 floats × 4 B = 5396 B 净数据；.pt 8.39 KB 含 pickle 头 + zipfile 索引
+```
+
+**部署到实际系统（生产推理路径）**：
+
+`backend/services/prediction/temporal_model.py` 加了 `_load_pretrained()` 入口：
+
+```python
+def _load_pretrained() -> Optional[WeldTemporalCNN]:
+    if not _WEIGHTS_PATH.exists():
+        return None
+    model = WeldTemporalCNN()
+    state = torch.load(_WEIGHTS_PATH, map_location="cpu")
+    model.load_state_dict(state)
+    model.eval()
+    return model
+
+def get_or_train(records):
+    with _model_lock:
+        cached = _model_cache["model"]
+        if cached is None:
+            pretrained = _load_pretrained()      # 冷启动优先 load .pt
+            if pretrained is not None:
+                _model_cache["model"] = pretrained
+                _model_cache["trained_on_count"] = len(records)
+                return pretrained
+        # 没有 .pt 或 load 失败 → 走老的 lazy train + RETRAIN_DELTA 重训路径
+        ...
+```
+
+完整推理链路（前端按"深度预测"→ 后端到 forecast 出 5 个分数）：
+
+```
+[前端 toggle "深度预测"]
+   ↓ /api/v1/predict?student_id=X&mode=deep
+[predict.py::get_prediction]
+   ↓ 拉该学生最近 ≤200 条 WeldingRecord
+[prediction.py::predict_with_temporal_model]
+   ↓ records 转 (smoothness/width/defect/total) DataFrame
+[temporal_model.py::get_or_train]
+   ↓ 首次：从 docs/temporal_model.pt load state_dict
+   ↓ 后续：累计 ≥30 条新记录才在线 retrain（并刷新 .pt）
+[temporal_model.py::forecast]
+   ↓ 取最近 5..30 行 → 归一化 /100 → torch.from_numpy → model(x).cpu().numpy()
+   ↓ 反归一化 × 100 → np.clip(0, 100)
+[returns 5 个 future scores]
+   ↓ predict.py 拼成 forecast = {timestamp_str: score}
+[前端折线图：历史 + 预测]
+```
+
+**冷启动 vs 在线训练分工**：
+- **冷启动加载**（默认路径）：`.pt` 是离线脚本用 1200 条规模数据精调过的，比 lazy train 用单生 22 条临时拟合的稳得多；服务起来第一次请求就能用
+- **在线 retrain**（数据漂移触发）：当某个学生累计 +30 条新记录后，`train_from_records` 会重训并写回 `.pt`——支持长时间运行后让模型跟随新数据 drift
+- **手动重训**：跑 `python scripts/train_temporal_offline.py` 拉到 docs 下，把 .pt 文件传到比赛电脑覆盖即可，不用重新跑训练
+
+**和 YOLO 的对照**：YOLO 走的是 `models/best.pt` 单文件直接加载，没有"lazy train"分支（因为预训练成本太高）；本模型只有 5 KB 参数，所以**两条路径并存**——能 load .pt 也能现训。这样既保留了"无 .pt 也能跑"的鲁棒性，又给了"离线训出好权重就直接部署"的标准 ML 工作流入口。
+
 **复现命令**：
 
 ```bash
 cd backend
 python scripts/train_temporal_offline.py
-# 落盘三个产物：
+# 落盘四个产物：
+#   docs/temporal_model.pt                state_dict 权重文件，部署用
 #   docs/temporal_training_curve.png      训练曲线
-#   docs/temporal_metrics.json            完整指标
+#   docs/temporal_metrics.json            完整指标（含 weights_path 字段）
 #   docs/temporal_training_data.csv       1200 行训练集
 ```
 
-固定 `RANDOM_SEED=7`，跑出来的指标是 bit-exact 可复现的。
+固定 `RANDOM_SEED=7`，跑出来的指标和 `.pt` 都是 bit-exact 可复现的。
 
 **创新点**：
 - 同一模型权重支持 5..30 任意输入长度，短历史学生不被 padding 拖垮
