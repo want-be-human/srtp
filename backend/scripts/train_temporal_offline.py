@@ -13,6 +13,8 @@ production 拿单学生 18-25 条切窗口只能产十几个样本，曲线噪�
 产物：
     docs/temporal_training_curve.png   train vs val 双曲线 + best epoch 竖线
     docs/temporal_metrics.json         train/val/test 三套 MSE / MAE / R² + 模型参数量
+    docs/temporal_training_data.csv    6 学生 × 200 条合成时序，列：student_id /
+                                       student_name / weak / sample_index / 三项子分 / 总分
 """
 
 import json
@@ -55,6 +57,9 @@ RANDOM_SEED = 7
 DOCS_DIR = Path(backend_dir).parent / "docs"
 CURVE_PATH = DOCS_DIR / "temporal_training_curve.png"
 METRICS_PATH = DOCS_DIR / "temporal_metrics.json"
+# 训练集物理落盘路径——评委追问"扩充的数据在哪"可直接打开 csv 复审，
+# 不写回 welding.db 避免污染演示叙事（demo 仍是 ~155 条真实演示历史）。
+DATASET_PATH = DOCS_DIR / "temporal_training_data.csv"
 
 
 def generate_student_rows(profile: dict, n: int, seed: int) -> list:
@@ -145,11 +150,31 @@ def main():
 
     print(f"=== 为 {len(PROFILES)} 个学生各合成 {TARGET_PER_STUDENT} 条 ===")
     student_arrays = {}
+    csv_rows = []  # 给 docs/temporal_training_data.csv 用
     for idx, profile in enumerate(PROFILES):
         rows = generate_student_rows(profile, TARGET_PER_STUDENT, seed=RANDOM_SEED + idx)
         student_arrays[profile["sid"]] = _rows_to_array(rows)
+        for sample_idx, r in enumerate(rows):
+            csv_rows.append({
+                "student_id": profile["sid"],
+                "student_name": profile["name"],
+                "weak": profile.get("weak") or "",
+                "sample_index": sample_idx,
+                "smoothness_score": r["smoothness_score"],
+                "width_score": r["width_score"],
+                "defect_score": r["defect_score"],
+                "total_score": r["total_score"],
+            })
         print(f"  {profile['sid']} {profile['name']}: "
               f"weak={profile.get('weak') or '-':<7} base={profile['base']}→+{profile['delta']}")
+
+    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    import csv as _csv
+    with DATASET_PATH.open("w", encoding="utf-8", newline="") as f:
+        writer = _csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(csv_rows)
+    print(f"训练集已写 {DATASET_PATH} ({len(csv_rows)} 行)")
 
     print()
     print(f"=== 按学生 70/15/15 切 train/val/test，再切窗口 ===")
