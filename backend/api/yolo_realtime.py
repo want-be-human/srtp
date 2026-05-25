@@ -491,7 +491,8 @@ def inference_loop():
                             "timestamp": time.time(),
                             "actual_width": round(random.uniform(4.0, 7.0), 2),
                             "defect_type_name": random.choice(["无缺陷", "气孔", "裂纹", "夹渣", "咬边", "未熔合", "焊瘤", "飞溅"]),
-                            "detected_defects": []
+                            "detected_defects": [],
+                            "is_mock": True,
                         }
 
                     with data_lock:
@@ -1169,7 +1170,8 @@ async def detect_frame(request: FrameDetectionRequest):
                 "timestamp": time.time(),
                 "actual_width": round(random.uniform(4.0, 7.0), 2),
                 "defect_type_name": random.choice(["无缺陷", "气孔", "裂纹"]),
-                "detected_defects": []
+                "detected_defects": [],
+                "is_mock": True,
             }
 
             return {
@@ -1263,7 +1265,8 @@ async def detect_image(request: ImageDetectionRequest):
                 "timestamp": time.time(),
                 "actual_width": round(random.uniform(4.0, 7.0), 2),
                 "defect_type_name": random.choice(["无缺陷", "气孔", "裂纹"]),
-                "detected_defects": []
+                "detected_defects": [],
+                "is_mock": True,
             }
 
             return {

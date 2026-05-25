@@ -108,6 +108,18 @@ function AutoScrollLessonPlan({ plans, interval = 5000 }: { plans: any[]; interv
   )
 }
 
+// 这两张卡片里的文案是写死的示例数据，等接入后端规则库后会替换；徽标提醒评委别当真
+const MockBadge = () => (
+  <div className="absolute top-3 right-3 z-10">
+    <span
+      className="px-2.5 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40"
+      title="此处为内置示例文案，等接入后端规则库后会替换为真实建议"
+    >
+      示例文案
+    </span>
+  </div>
+)
+
 // 教学建议轮播文案（暂时写死，后续接后端规则库）
 const MOCK_TEACHING_RECOMMENDATIONS = [
   "加强焊接基础知识学习，掌握焊接工艺原理和操作规范",
@@ -421,11 +433,7 @@ export function LessonPlanExportContent() {
       {lessonData && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 relative overflow-hidden">
-            <div className="absolute top-3 right-3 z-10">
-              <span className="px-3 py-1 text-xs font-semibold bg-gradient-to-r from-cyan-500 to-blue-500 text-white rounded-full shadow-lg animate-pulse">
-                Agent生成
-              </span>
-            </div>
+            <MockBadge />
             <CardHeader>
               <CardTitle className="text-white text-xl">教学建议预览</CardTitle>
             </CardHeader>
@@ -435,11 +443,7 @@ export function LessonPlanExportContent() {
           </Card>
 
           <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 relative overflow-hidden">
-            <div className="absolute top-3 right-3 z-10">
-              <span className="px-3 py-1 text-xs font-semibold bg-gradient-to-r from-yellow-500 to-orange-500 text-white rounded-full shadow-lg animate-pulse">
-                Agent生成
-              </span>
-            </div>
+            <MockBadge />
             <CardHeader>
               <CardTitle className="text-white text-xl">下节课计划</CardTitle>
             </CardHeader>

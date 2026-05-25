@@ -14,12 +14,15 @@ interface PredictionData {
   skill_stats: Record<string, number>;
   defect_stats: Record<string, number>;
   total_detections: number;
+  // 后端走规则兜底（模块加载失败 / 数据库无样本）时置 true，前端显示样本不足警示
+  is_fallback?: boolean;
+  fallback_reason?: string | null;
 }
 
-interface RadarData {
+export interface RadarData {
   defect_radar: Record<string, number>;
   skill_radar: Record<string, number>;
-  ai_summary: string;
+  ai_summary?: string;
   data_source?: string;
 }
 
@@ -28,7 +31,7 @@ interface RadarData {
 const EMPTY_DEFECT_DATA: Record<string, number> = {
   "夹渣": 0, "气孔": 0, "焊瘤": 0, "咬边": 0, "未熔合": 0, "裂纹": 0,
 }
-const EMPTY_SKILL_DATA: Record<string, number> = {
+export const EMPTY_SKILL_DATA: Record<string, number> = {
   "光滑度均值": 0, "宽度准度": 0, "缺陷控制": 0, "宽度稳定性": 0, "进步速率": 0, "缺陷集中度": 0,
 }
 
@@ -354,6 +357,12 @@ export function PredictionDashboardContent() {
       <div className="flex justify-between items-center">
         <h2 className="text-3xl font-bold text-white">智能焊接预测分析</h2>
       </div>
+
+      {predictionData?.is_fallback && (
+        <div className="rounded-lg border border-yellow-500/40 bg-yellow-500/10 px-4 py-2 text-sm text-yellow-200">
+          样本不足，规则预测{predictionData.fallback_reason ? ` · ${predictionData.fallback_reason}` : ""}
+        </div>
+      )}
 
       <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 backdrop-blur-sm">
         <CardHeader className="flex flex-row items-center justify-between space-y-0">

@@ -128,6 +128,10 @@ class PredictionResponse(BaseModel):
     skill_stats: Dict[str, float]
     defect_stats: Dict[str, float]
     total_detections: int
+    # 走规则兜底（线性外推 / 数据库无样本回退到 _generate_demo_data）时置 True，
+    # 前端拿到要在面板顶部提示"样本不足，规则预测"
+    is_fallback: bool = False
+    fallback_reason: Optional[str] = None
 
 class AIAnalysisResponse(BaseModel):
     ai_analysis: Dict[str, Any]
@@ -223,6 +227,8 @@ async def get_prediction(
                         skill_stats=cached_result.skill_stats,
                         defect_stats=cached_result.defect_stats,
                         total_detections=current_record_count,
+                        is_fallback=cached_result.is_fallback,
+                        fallback_reason=cached_result.fallback_reason,
                     )
                     logger.info(
                         f"使用缓存结果 (student={student_id or '-'}, history={len(new_history)} 点, "
@@ -237,11 +243,16 @@ async def get_prediction(
                     skill_stats=cached_result.skill_stats,
                     defect_stats=cached_result.defect_stats,
                     total_detections=current_record_count,
+                    is_fallback=cached_result.is_fallback,
+                    fallback_reason=cached_result.fallback_reason,
                 )
                 logger.info(f"使用缓存结果 (student={student_id or '-'}, 无法获取最新数据)")
                 return response
 
         logger.info(f"开始执行预测流程... (student={student_id or '-'}, mode={mode}, 原因: {cache_reason})")
+
+        is_fallback = False
+        fallback_reason: Optional[str] = None
 
         # 动态导入模块（如果之前导入失败）
         import importlib
@@ -254,6 +265,8 @@ async def get_prediction(
             predict_with_temporal_model = prediction_mod.predict_with_temporal_model
         except ImportError as e:
             logger.warning(f"导入预测模块失败: {e}, 使用备用简化预测功能")
+            is_fallback = True
+            fallback_reason = "预测模块加载失败，启用线性外推兜底"
             # 使用简化的预测功能
             def simple_predict_future_scores(historical_data, days=5):
                 import numpy as np
@@ -291,12 +304,16 @@ async def get_prediction(
                 }
 
             predict_future_scores = simple_predict_future_scores
+            predict_with_temporal_model = simple_predict_future_scores
 
         detection_data = _get_detection_data_from_db(db, student_id=student_id)
 
         if not detection_data:
             logger.info("数据库无检测数据，回退到演示数据")
             detection_data = _generate_demo_data(days=15)
+            is_fallback = True
+            if fallback_reason is None:
+                fallback_reason = "样本不足，使用演示数据生成预测"
         else:
             logger.info(f"从数据库加载了 {len(detection_data)} 条历史记录")
 
@@ -384,7 +401,9 @@ async def get_prediction(
             forecast=prediction_result['forecast'],
             skill_stats=skill_stats,
             defect_stats=defect_stats,
-            total_detections=current_record_count
+            total_detections=current_record_count,
+            is_fallback=is_fallback,
+            fallback_reason=fallback_reason,
         )
 
         with _prediction_cache["lock"]:

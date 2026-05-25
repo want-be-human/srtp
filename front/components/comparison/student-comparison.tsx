@@ -3,7 +3,7 @@
 import React, { useEffect, useMemo, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
-import { Trophy, User, Swords, RefreshCw, Info } from "lucide-react"
+import { Trophy, User, Swords, RefreshCw } from "lucide-react"
 import {
   RadarChart,
   Radar,
@@ -20,6 +20,7 @@ import type { TreeData } from "@/components/data-tree/data-tree-context"
 import { DataTreeViewer } from "@/components/data-tree/data-tree-viewer"
 import { convertYOLOToTreeData } from "@/components/data-tree/data-adapter"
 import { DefectHeatmap } from "@/components/comparison/defect-heatmap"
+import { EMPTY_SKILL_DATA, type RadarData } from "@/components/prediction/prediction-dashboard"
 
 interface StudentStats {
   student_id: string
@@ -57,25 +58,18 @@ interface RecentScoresResponse {
   scores: ScoreRecord[]
 }
 
-// DB 里只有 3 项真实分数，剩下 3 维（间距控制/熔深控制/焊接速度）用真实分数估算出来
-const RADAR_AXES = ["光滑度", "间距控制", "缺陷控制", "焊缝宽度", "熔深控制", "焊接速度"] as const
+// 跟智能预测页共享 6 维定义（光滑度均值 / 宽度准度 / 缺陷控制 / 宽度稳定性 / 进步速率 /
+// 缺陷集中度），数据来自 /predict/ai-radar-data，不再走派生公式。
+const RADAR_AXES = Object.keys(EMPTY_SKILL_DATA)
 
-function buildSixDimRadar(s: StudentStats | null): Record<(typeof RADAR_AXES)[number], number> {
-  if (!s) {
-    return { 光滑度: 0, 间距控制: 0, 缺陷控制: 0, 焊缝宽度: 0, 熔深控制: 0, 焊接速度: 0 }
+function pickSkillRadar(payload: RadarData | null): Record<string, number> {
+  if (!payload || payload.data_source === "DATABASE_EMPTY") return EMPTY_SKILL_DATA
+  const out: Record<string, number> = { ...EMPTY_SKILL_DATA }
+  for (const axis of RADAR_AXES) {
+    const v = payload.skill_radar?.[axis]
+    if (typeof v === "number" && Number.isFinite(v)) out[axis] = v
   }
-  const smooth = s.avg_smoothness
-  const width = s.avg_width
-  const defect = s.avg_defect
-  const total = s.avg_total_score
-  return {
-    光滑度: smooth,
-    焊缝宽度: width,
-    缺陷控制: defect,
-    间距控制: smooth * 0.5 + width * 0.5,
-    熔深控制: defect * 0.6 + smooth * 0.4,
-    焊接速度: total * 0.92,
-  }
+  return out
 }
 
 function recordsToTreeMap(records: ScoreRecord[]): Map<number, TreeData> {
@@ -98,6 +92,38 @@ function recordsToTreeMap(records: ScoreRecord[]): Map<number, TreeData> {
 const RECORDS_LIMIT = 200
 const RADAR_COLORS = { self: "#3B82F6", opponent: "#F59E0B" } as const
 
+function useRadarFetch(
+  studentId: string | null,
+  refreshKey: number,
+  setRadar: React.Dispatch<React.SetStateAction<RadarData | null>>,
+  label: string,
+) {
+  useEffect(() => {
+    if (!studentId) {
+      setRadar(null)
+      return
+    }
+    let cancelled = false
+    const url = `${API_ENDPOINTS.PREDICT_AI_RADAR}?student_id=${encodeURIComponent(studentId)}`
+    fetch(url)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`)
+        return r.json() as Promise<RadarData>
+      })
+      .then((data) => {
+        if (!cancelled) setRadar(data)
+      })
+      .catch((err) => {
+        if (cancelled) return
+        console.warn(`[comparison] 拉取${label}雷达失败`, err)
+        setRadar(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [studentId, refreshKey, setRadar, label])
+}
+
 export function StudentComparisonContent() {
   const { currentUser } = useAuth()
 
@@ -107,6 +133,8 @@ export function StudentComparisonContent() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
+  const [selfRadar, setSelfRadar] = useState<RadarData | null>(null)
+  const [opponentRadar, setOpponentRadar] = useState<RadarData | null>(null)
 
   useEffect(() => {
     if (!currentUser) return
@@ -174,15 +202,18 @@ export function StudentComparisonContent() {
     [allStudents, currentUser],
   )
 
+  useRadarFetch(currentUser?.student_id ?? null, refreshKey, setSelfRadar, "self")
+  useRadarFetch(opponentId || null, refreshKey, setOpponentRadar, "opponent")
+
   const radarData = useMemo(() => {
-    const selfRow = buildSixDimRadar(selfStats)
-    const oppRow = buildSixDimRadar(opponentStats)
+    const selfRow = pickSkillRadar(selfRadar)
+    const oppRow = pickSkillRadar(opponentRadar)
     return RADAR_AXES.map((axis) => ({
       subject: axis,
       self: Number(selfRow[axis].toFixed(1)),
       opponent: Number(oppRow[axis].toFixed(1)),
     }))
-  }, [selfStats, opponentStats])
+  }, [selfRadar, opponentRadar])
 
   if (!currentUser) {
     return <div className="text-gray-400 p-6">请先登录后再进入学生对比。</div>
@@ -304,15 +335,9 @@ export function StudentComparisonContent() {
 
       <Card className="bg-slate-800/50 border-slate-600">
         <CardHeader className="pb-2">
-          <CardTitle className="text-white text-base flex items-center justify-between">
-            <span className="flex items-center">
-              <Trophy className="w-5 h-5 mr-2 text-yellow-400" />
-              六维技能雷达
-            </span>
-            <span className="text-xs text-gray-500 flex items-center">
-              <Info className="w-3.5 h-3.5 mr-1" />
-              间距/熔深/速度为真实分数代理估算
-            </span>
+          <CardTitle className="text-white text-base flex items-center">
+            <Trophy className="w-5 h-5 mr-2 text-yellow-400" />
+            六维技能雷达
           </CardTitle>
         </CardHeader>
         <CardContent className="p-4">

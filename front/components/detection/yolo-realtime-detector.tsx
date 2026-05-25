@@ -27,6 +27,8 @@ export interface YOLODetectionResult {
   actualWidth?: number;
   defectTypeName?: string;
   detectedDefects?: string[];
+  // 后端在 YOLO 不可用 / 推理失败兜底时会带 is_mock=true，前端用它显示"YOLO 离线"
+  isMock?: boolean;
 }
 
 // 切模块时检测组件会被卸载，下面这几项必须由父级保活
@@ -127,7 +129,8 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
           timestamp: new Date(result.data.timestamp * 1000).toISOString(),
           actualWidth: result.data.actual_width,
           defectTypeName: result.data.defect_type_name,
-          detectedDefects: result.data.detected_defects || []
+          detectedDefects: result.data.detected_defects || [],
+          isMock: result.data.is_mock === true,
         }
       }
       return null
@@ -266,7 +269,8 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
               timestamp: new Date().toISOString(),
               actualWidth: result.data.actual_width,
               defectTypeName: result.data.defect_type_name,
-              detectedDefects: result.data.detected_defects || []
+              detectedDefects: result.data.detected_defects || [],
+              isMock: result.data.is_mock === true,
             }
             setCurrentScores(scores)
           } else {
@@ -324,6 +328,14 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                 YOLO实时检测
               </div>
               <div className="flex items-center space-x-2">
+                {currentScores?.isMock && (
+                  <span
+                    className="px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-300 border border-red-500/40"
+                    title="后端 YOLO 模型未加载，当前数据为随机演示值"
+                  >
+                    YOLO 离线 · 演示数据
+                  </span>
+                )}
                 {isDetecting && (
                   <div className="flex items-center text-green-400 text-sm">
                     <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse mr-2"></div>
