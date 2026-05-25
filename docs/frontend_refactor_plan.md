@@ -29,7 +29,7 @@
 
 ## 2. WeldNet 检测页 — P1
 
-- [ ] 页头标题：`焊缝检测` → `WeldNet 智能检测系统`
+- [ ] 页头标题：`焊缝检测` 改成 `WeldNet 智能检测系统`
 - [ ] 当前已经在 `YOLORealtimeDetector` 内做了 `realtime / 3dgs` toggle，
       但 3DGS 视图是“替换主画面”形态。**调整为：实时检测主区在上，3DGS 区在下**
       （独立 Card，纵向排布），去掉 toggle
@@ -40,15 +40,15 @@
 
 ## 3. 高斯泼溅交付形态 — P1
 
-队友默认形态是“用户上传视频 → 训练 → 显示”。教学场景里没法等训练，改成预设。
+队友默认形态是“用户上传视频，后端训练再显示”。教学场景里没法等训练，改成预设。
 
 - [ ] 移除前端上传视频入口（`UPLOAD_VIDEO` endpoint 保留但 UI 隐藏）
 - [ ] 后端预生成 1 个示范 `.ply`（焊缝样本），放到 `backend/static/3dgs/model_light.ply`
-- [ ] 渐进式显示：分轮加载点云，先显示低密度版（前 20% 高斯点）→ 30% → 60% → 100%
+- [ ] 渐进式显示：分轮加载点云，第一帧只渲染 20% 高斯点，之后逐步追加到 30%、60%、100%
   - 实现：把 `.ply` 切成 3-4 个分块文件，按序拉取并 merge 到 BufferGeometry
   - 或者用 LOD：单文件按 opacity 阈值排序后切片
 - [ ] 首屏时间预算：30 秒内出可辨识形态，剩余精细化在背景继续
-- [ ] 不追求极致渲染质量，重点是“评委进页面就能看到东西”
+- [ ] 不追求极致渲染质量，重点是用户进页面立刻有内容可看
 
 ## 4. 智能预测 + 报告导出合并 — P1
 
@@ -89,20 +89,80 @@
 
 ## 8. 接入时机与依赖关系
 
-```
-P0 控制中心  →  独立可并行
-P1 检测页    ←  依赖 GaussianSplatViewer 形态调整
-P1 3DGS 渐进 ←  需要先有切片好的 .ply（后端 / 离线脚本）
-P1 预测+报告 ←  独立
-P2 数据树+PK ←  独立
-P2 AI 教师   ←  独立
-P3 PDF 模板  ←  依赖 P1 报告导出合并
-```
+- P0 控制中心：独立可并行
+- P1 检测页：依赖 GaussianSplatViewer 形态调整
+- P1 3DGS 渐进：需要先有切片好的 .ply（后端或离线脚本）
+- P1 预测 + 报告合并：独立
+- P2 数据树 + PK：独立
+- P2 AI 教师：独立
+- P3 PDF 模板：依赖 P1 报告导出合并
 
-建议执行顺序：P0 控制中心 → P1 检测页样式 → P1 预测+报告合并 →
-P1 3DGS 渐进形态 → P2 → P3。
+建议执行顺序：P0 控制中心，然后 P1 检测页样式、P1 预测+报告合并、
+P1 3DGS 渐进形态，然后 P2 一组，最后 P3。
 
-## 9. 风险与未决项
+## 9. 合并后立刻暴露出来的几个新问题（明天一起改）
+
+### 9.1 `/static/3dgs/model_light.ply` 404（必修）
+
+队友前端写了 `API_ENDPOINTS.MODEL_3DGS = ${API_BASE_URL}/static/3dgs/model_light.ply`，
+但后端 `main.py` 完全没挂 `StaticFiles`，`backend/static/` 目录也不存在，所以浏览器直接
+404，前端 GaussianSplatViewer 拉模型失败，进 error 状态。
+
+修法：
+- `backend/main.py` 增加：
+  ```python
+  from fastapi.staticfiles import StaticFiles
+  static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+  os.makedirs(static_dir, exist_ok=True)
+  app.mount("/static", StaticFiles(directory=static_dir), name="static")
+  ```
+- 在 `backend/static/3dgs/` 放一个示范 `.ply`（先用队友 3dgs/data 里的演示模型）
+- `.ply` 大的话考虑 gitignore，单独走百度网盘 / 自动下载脚本
+
+### 9.2 摄像头标定每次启动都得重做（持久化失效）
+
+排查结论：标定写库是好的（`calibration.py::save_calibration` 写 `CameraCalibration`
+表，`load_calibration_pixels_per_mm` 启动时读）。**问题在于 `backend/welding.db`
+本身被 git 追踪**，pull/merge 任何分支都会用仓库版本覆盖本地标定数据。
+
+修法：
+- `git rm --cached backend/welding.db` 把数据库从版本追踪里摘出去
+- `.gitignore` 加 `backend/welding.db`
+- 同时保留一份 `backend/welding.db.seed`（演示数据快照）供新机器初始化用，`main.py`
+  启动时若发现 `welding.db` 不存在就从 `welding.db.seed` 复制一份
+- 这是 destructive 操作（标定数据放在不入仓的 db 文件里），明天动手前先备份本地 db
+
+### 9.3 高斯泼溅“摄像头采集”是 UI 假动画，不调摄像头
+
+经查 `gaussian-splat-viewer.tsx`：
+- 没有 `getUserMedia` / `<video>` / `navigator.mediaDevices` 调用
+- `PIPELINE_STAGES` 数组里“从 3DGS 摄像头采集环绕视频 / COLMAP 重建 / 迭代 7000”
+  全部是 `setInterval` 假进度，整个 `viewState === 'processing'` 期间只是按预设时长
+  画进度条
+- 实际只做一件事：从 `modelUrl` 拉预生成的 `.ply` 文件，Three.js 渲染点云
+
+所以学生进检测页看到“正在采集”不会真的开摄像头，**全黑跟室内光线无关**，全黑的真正
+原因就是 9.1 那个 404 让点云压根没下下来。
+
+要不要让它真的调摄像头是个产品决策：
+- 方案 A（现状）：保留假动画，后端走预生成 `.ply`，演示稳定，但学生“看不到自己的板子”
+- 方案 B：真接摄像头，前端 `getUserMedia` 抓 24 角度图传后端，后端跑 COLMAP +
+  gaussian-splatting 训练。教学场景训练时长 10-30 分钟，跟“现场演示”不兼容
+- 方案 C：折中——前端调摄像头**只拍封面预览图**作为 viewer 的 thumbnail / 角标，
+  实际重建仍走预生成 `.ply`，给用户“我的板子被拍到了”的感知
+
+倾向方案 C。如果走 C，UI 上要加摄像头选择器（同 `YOLORealtimeDetector` 里的
+`CameraSelector`），让用户选用哪个摄像头拍封面。
+
+### 9.4 高斯泼溅摄像头选择器（仅在采用方案 C 时做）
+
+- 复用 `front/components/detection/camera-selector.tsx` + `lib/camera-config.ts`
+- 在 `GaussianSplatViewer` 顶部加 `<Settings />` 按钮打开同一个 selector dialog
+- 选完保存到 `localStorage`（key 区分 `splat_camera_choice` 不复用检测页那把）
+- 抓帧时机：用户点“开始三维重建”时，先 getUserMedia 抓 1 张快照存内存，作为
+  reveal 完成后 viewer 角落的小图
+
+## 10. 风险与未决项
 
 - **3DGS 渐进加载的切片方案**：`.ply` 文件内部点云顺序不保证按视觉重要性排，
   直接前 20% 截可能出现稀疏空洞。可能需要先按距离相机的距离排序再切片
