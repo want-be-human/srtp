@@ -1,18 +1,15 @@
 # -*- coding: utf-8 -*-
-"""清除 welding.db 里所有演示账号产生的检测记录（WeldingRecord 表）。
+"""只删名字为"演示账号"的孤儿账户产生的检测记录。
 
 用法：
     cd backend
     python scripts/purge_demo_records.py
 
-清理范围：
-- 所有 `notes='demo_seed:v1'` 的记录（seed_demo_data 写入的画像数据）
-- 所有 `student_id='student_demo'` 的孤立旧记录
-- Student 表的 6 个演示账号**保留**，登录功能要用；只清检测历史
-
-要重新填充演示数据：
-    python scripts/seed_demo_data.py
-    python scripts/seed_demo_bboxes.py
+清理范围（保守，只清孤儿）：
+- 所有 `student_id='student_demo'` 的 WeldingRecord
+- 所有 `student_name='演示账号'` 的 WeldingRecord（兜底：student_id 写丢但姓名没改）
+- 不动 `notes='demo_seed:v1'` 的 6 个学生（陈思远等）数据，这些是答辩演示用的画像
+- 不动 Student 表，登录账号全部保留
 """
 
 import os
@@ -26,8 +23,8 @@ from database import SessionLocal
 import models
 
 
-DEMO_TAGS = ("demo_seed:v1",)
 ORPHAN_SID = "student_demo"
+ORPHAN_NAME = "演示账号"
 
 
 def main():
@@ -36,35 +33,26 @@ def main():
         total_before = db.query(models.WeldingRecord).count()
         print(f"清理前 WeldingRecord 总数: {total_before}")
 
-        by_tag = (
-            db.query(models.WeldingRecord)
-            .filter(models.WeldingRecord.notes.in_(DEMO_TAGS))
-            .delete(synchronize_session=False)
-        )
-        print(f"  - notes in {DEMO_TAGS} 删除 {by_tag} 条")
-
-        orphans = (
+        by_sid = (
             db.query(models.WeldingRecord)
             .filter(models.WeldingRecord.student_id == ORPHAN_SID)
             .delete(synchronize_session=False)
         )
-        print(f"  - student_id={ORPHAN_SID!r} 删除 {orphans} 条")
+        print(f"  - student_id={ORPHAN_SID!r} 删除 {by_sid} 条")
 
-        # 谨慎兜底：notes=None 的孤儿（早期没打 tag 写入的）
-        nulls = (
+        by_name = (
             db.query(models.WeldingRecord)
-            .filter(models.WeldingRecord.notes.is_(None))
+            .filter(models.WeldingRecord.student_name == ORPHAN_NAME)
             .delete(synchronize_session=False)
         )
-        print(f"  - notes IS NULL 删除 {nulls} 条")
+        print(f"  - student_name={ORPHAN_NAME!r} 删除 {by_name} 条（兜底）")
 
         db.commit()
         total_after = db.query(models.WeldingRecord).count()
         print(f"清理后 WeldingRecord 总数: {total_after}")
 
-        # Student 表不动
         students = db.query(models.Student).count()
-        print(f"Student 表保留: {students} 行")
+        print(f"Student 表保留: {students} 行（登录账号不动）")
     except Exception:
         db.rollback()
         raise

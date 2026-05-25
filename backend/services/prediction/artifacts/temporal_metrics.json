@@ -1,5 +1,5 @@
 {
-  "trained_at": "2026-05-26T00:13:01",
+  "trained_at": "2026-05-26T00:26:21",
   "students": [
     "2024112434",
     "2024111216",
@@ -48,6 +48,6 @@
     "samples": 204
   },
   "model_params": 1349,
-  "weights_path": "docs/temporal_model.pt",
+  "weights_path": "backend/services/prediction/artifacts/temporal_model.pt",
   "weights_size_kb": 8.39
 }

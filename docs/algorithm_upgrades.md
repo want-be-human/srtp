@@ -296,12 +296,14 @@ calibrated 标志"的完整闭环交付出来。
 
 **训练逻辑与方法（完整解读）**：
 
-1. **训练数据集物理位置**：[`docs/temporal_training_data.csv`](./temporal_training_data.csv)
+1. **训练数据集物理位置**：[`backend/services/prediction/artifacts/temporal_training_data.csv`](../backend/services/prediction/artifacts/temporal_training_data.csv)
    （1200 行，列：`student_id, student_name, weak, sample_index, smoothness_score,
    width_score, defect_score, total_score`）。**不**写回 `welding.db` 主表，因为
    welding.db 是演示运行时数据（demo_seed:v1，~155 条），保持干净；训练集独立
    CSV 落盘评委可直接 Excel/pandas 打开复审。`welding.db` 行数永远等于真实演示
-   数据条数，不会因为训练而变 1300。
+   数据条数，不会因为训练而变 1300。模型相关产物（.pt / .png / .json / .csv）
+   全部在 `backend/services/prediction/artifacts/` 这一个目录下，docs/ 只放
+   markdown 文档。
 
 2. **数据合成假设**：6 个学生画像（`scripts/seed_demo_data.py::PROFILES`，含
    base/delta/noise/weak）模拟"一学期 200 次焊接练习"的连续时序：
@@ -352,7 +354,7 @@ calibrated 标志"的完整闭环交付出来。
    附近 val 触底，之后小幅回升 0.0001-0.0002（轻微过拟合开始）。生产可以加
    patience=20 的早停，本次实验数据小没必要。
 
-10. **指标计算**（[`docs/temporal_metrics.json`](./temporal_metrics.json)）：
+10. **指标计算**（[`backend/services/prediction/artifacts/temporal_metrics.json`](../backend/services/prediction/artifacts/temporal_metrics.json)）：
     - **MSE** 在归一化空间，作为优化目标的直接镜像
     - **MAE_normalized** 同空间，相对 MSE 更鲁棒（不被极端样本拉偏）
     - **MAE_score** = MAE_normalized × 100，对话稿引用："5 步预测的平均偏差是 X 分"
@@ -369,12 +371,15 @@ DB 历史（~22 条）。这条路径**有意保留小数据 fine-tune 的灵活
 
 **训练产物（部署 / 推理用的核心文件）**：
 
+统一在 [`backend/services/prediction/artifacts/`](../backend/services/prediction/artifacts/)
+目录下，跟 `temporal_model.py` 同级，部署时整个目录拷过去即可。
+
 | 文件                                 | 大小      | 用途                                                            |
 |--------------------------------------|-----------|-----------------------------------------------------------------|
-| [docs/temporal_model.pt](./temporal_model.pt) | **8.39 KB** | **PyTorch state_dict**——`{layer_name: tensor}` 的字典序列化结果；这才是"训练出来的模型"，进程加载它就能直接推理 |
-| [docs/temporal_metrics.json](./temporal_metrics.json) | < 1 KB    | 训练指标快照（含 `weights_path` 字段指向 .pt 相对路径）          |
-| [docs/temporal_training_curve.png](./temporal_training_curve.png) | ~30 KB    | 训练曲线，答辩 PPT 直接贴                                       |
-| [docs/temporal_training_data.csv](./temporal_training_data.csv) | ~70 KB    | 1200 行训练集，可审计可复现                                     |
+| [`artifacts/temporal_model.pt`](../backend/services/prediction/artifacts/temporal_model.pt) | **8.39 KB** | **PyTorch state_dict**——`{layer_name: tensor}` 的字典序列化结果；这才是"训练出来的模型"，进程加载它就能直接推理 |
+| [`artifacts/temporal_metrics.json`](../backend/services/prediction/artifacts/temporal_metrics.json) | < 1 KB    | 训练指标快照（含 `weights_path` 字段指向 .pt 相对路径）          |
+| [`artifacts/temporal_training_curve.png`](../backend/services/prediction/artifacts/temporal_training_curve.png) | ~30 KB    | 训练曲线，答辩 PPT 直接贴                                       |
+| [`artifacts/temporal_training_data.csv`](../backend/services/prediction/artifacts/temporal_training_data.csv) | ~70 KB    | 1200 行训练集，可审计可复现                                     |
 
 `.pt` 文件等价于 YOLO 模型的 `best.pt` / `last.pt`，只不过本模型只有 1349 参数，所以 8.39 KB 而不是几十 MB。内部存储格式（`torch.save` 默认走 zipfile + pickle）：
 
@@ -428,7 +433,7 @@ def get_or_train(records):
 [prediction.py::predict_with_temporal_model]
    ↓ records 转 (smoothness/width/defect/total) DataFrame
 [temporal_model.py::get_or_train]
-   ↓ 首次：从 docs/temporal_model.pt load state_dict
+   ↓ 首次：从 backend/services/prediction/artifacts/temporal_model.pt load state_dict
    ↓ 后续：累计 ≥30 条新记录才在线 retrain（并刷新 .pt）
 [temporal_model.py::forecast]
    ↓ 取最近 5..30 行 → 归一化 /100 → torch.from_numpy → model(x).cpu().numpy()
@@ -451,10 +456,10 @@ def get_or_train(records):
 cd backend
 python scripts/train_temporal_offline.py
 # 落盘四个产物：
-#   docs/temporal_model.pt                state_dict 权重文件，部署用
-#   docs/temporal_training_curve.png      训练曲线
-#   docs/temporal_metrics.json            完整指标（含 weights_path 字段）
-#   docs/temporal_training_data.csv       1200 行训练集
+#   backend/services/prediction/artifacts/temporal_model.pt           权重文件，部署用
+#   backend/services/prediction/artifacts/temporal_training_curve.png  训练曲线
+#   backend/services/prediction/artifacts/temporal_metrics.json        完整指标
+#   backend/services/prediction/artifacts/temporal_training_data.csv   1200 行训练集
 ```
 
 固定 `RANDOM_SEED=7`，跑出来的指标和 `.pt` 都是 bit-exact 可复现的。
@@ -696,7 +701,7 @@ P0-P3 11 项完成后做了一轮全栈审计，发现以下「已实现但展�
 | 编号 | 弱点 | 评委可能的提问 | 修补方案 |
 |---|---|---|---|
 | **E-P3-2.v2** | AI schema 重试**完全没做**，`ai_analysis.py` 仍是一次失败直接 fallback | 「AI 拿到的 schema 长什么样？失败怎么办？」 | 解析失败时把「上次输出无法解析为 JSON，请严格按 schema」加到 user message 重试 1 次；prompt 附 `severity_map`；pydantic 校验返回字段 |
-| **E-P2-1.v2** ✅ | 1D-CNN 无训练曲线、无 R²/loss 落盘 | 「训练曲线在哪？loss 是多少？」 | 完成：`scripts/train_temporal_offline.py` 按学生切 train/val/test，落盘 `docs/temporal_training_curve.png` + `docs/temporal_metrics.json`；test MAE 7.68 分 / R²=0.11，详见 §7 |
+| **E-P2-1.v2** ✅ | 1D-CNN 无训练曲线、无 R²/loss 落盘 | 「训练曲线在哪？loss 是多少？」 | 完成：`scripts/train_temporal_offline.py` 按学生切 train/val/test，落盘 `backend/services/prediction/artifacts/` 下 `.pt + .png + .json + .csv` 四件套；test MAE 7.68 分 / R²=0.11，详见 §7 |
 | **E-P1-2.v2** | 暗-亮-暗连续性过滤数量没暴露到 UI | 「拿一段反光带视频对比开/关」 | `_pick_best_row` 返回 `rejected_count`，透传到 `current_detection_data`，MJPEG 角标显示 |
 
 ### 🟢 绿色（顺手做）

@@ -19,14 +19,14 @@ import torch.nn as nn
 
 logger = logging.getLogger(__name__)
 
-# docs/ 落盘训练曲线 + metrics，给答辩页和 docs/algorithm_upgrades.md 引用
-_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_DOCS_DIR = _REPO_ROOT / "docs"
-_CURVE_PATH = _DOCS_DIR / "temporal_training_curve.png"
-_METRICS_PATH = _DOCS_DIR / "temporal_metrics.json"
+# 模型相关产物放在模块旁的 artifacts/，跟代码就近，不污染 docs/
+# （docs/ 只放 markdown 文档；模型权重 / 训练曲线 / 指标 / 训练集 都在这里）
+_ARTIFACTS_DIR = Path(__file__).resolve().parent / "artifacts"
+_CURVE_PATH = _ARTIFACTS_DIR / "temporal_training_curve.png"
+_METRICS_PATH = _ARTIFACTS_DIR / "temporal_metrics.json"
 # state_dict 文件路径：每层 weight + bias 的 tensor 序列化结果。
 # 进程启动时 _load_pretrained() 先尝试 load 它当作初始权重，跳过冷启动 train。
-_WEIGHTS_PATH = _DOCS_DIR / "temporal_model.pt"
+_WEIGHTS_PATH = _ARTIFACTS_DIR / "temporal_model.pt"
 
 
 # 预测的步数
@@ -152,9 +152,9 @@ def _dump_training_artifacts(
     epoch_losses: Sequence[float],
     sample_count: int,
 ) -> None:
-    """每次重训完都更新 docs/ 下的曲线 + metrics；任何 IO 失败都不影响训练成功。"""
+    """每次重训完都更新 artifacts/ 下的曲线 + metrics + .pt；任何 IO 失败都不影响训练成功。"""
     try:
-        _DOCS_DIR.mkdir(parents=True, exist_ok=True)
+        _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
         # 训练集自评 R²（数据量小不切验证集，标清楚口径就好）
         with torch.no_grad():
@@ -183,7 +183,10 @@ def _dump_training_artifacts(
             "feature_dim": FEATURE_DIM,
             "forecast_size": FORECAST_SIZE,
             "windows": list(TRAIN_WINDOWS),
-            "weights_path": str(_WEIGHTS_PATH.relative_to(_REPO_ROOT)).replace("\\", "/"),
+            # 相对仓库根的路径方便文档引用；4 个 .parent 是 artifacts → prediction → services → backend → 根
+            "weights_path": str(
+                _WEIGHTS_PATH.relative_to(Path(__file__).resolve().parents[3])
+            ).replace("\\", "/"),
         }
         _METRICS_PATH.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
 

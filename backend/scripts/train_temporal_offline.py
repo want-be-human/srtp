@@ -10,13 +10,13 @@ production 拿单学生 18-25 条切窗口只能产十几个样本，曲线噪�
     cd backend
     python scripts/train_temporal_offline.py
 
-产物：
-    docs/temporal_model.pt             PyTorch state_dict，5.3 KB；production 启动
-                                       时 _load_pretrained() 直接 load 它 warm start
-    docs/temporal_training_curve.png   train vs val 双曲线 + best epoch 竖线
-    docs/temporal_metrics.json         train/val/test 三套 MSE / MAE / R² + 模型参数量
-    docs/temporal_training_data.csv    6 学生 × 200 条合成时序，列：student_id /
-                                       student_name / weak / sample_index / 三项子分 / 总分
+产物（统一落到 backend/services/prediction/artifacts/，跟代码就近，docs/ 只放文档）：
+    temporal_model.pt              PyTorch state_dict；production 启动时
+                                   temporal_model._load_pretrained() 直接 load 它 warm start
+    temporal_training_curve.png    train vs val 双曲线 + best epoch 竖线
+    temporal_metrics.json          train/val/test 三套 MSE / MAE / R² + 模型参数量
+    temporal_training_data.csv     6 学生 × 200 条合成时序，列：student_id /
+                                   student_name / weak / sample_index / 三项子分 / 总分
 """
 
 import json
@@ -56,15 +56,19 @@ EPOCHS = 200
 LR = 1e-3
 RANDOM_SEED = 7
 
-DOCS_DIR = Path(backend_dir).parent / "docs"
-CURVE_PATH = DOCS_DIR / "temporal_training_curve.png"
-METRICS_PATH = DOCS_DIR / "temporal_metrics.json"
+# 模型产物全部放在 prediction 模块旁的 artifacts/，跟 temporal_model._ARTIFACTS_DIR
+# 保持一致，docs/ 留给纯文档。
+ARTIFACTS_DIR = Path(backend_dir) / "services" / "prediction" / "artifacts"
+CURVE_PATH = ARTIFACTS_DIR / "temporal_training_curve.png"
+METRICS_PATH = ARTIFACTS_DIR / "temporal_metrics.json"
 # 训练集物理落盘路径——评委追问"扩充的数据在哪"可直接打开 csv 复审，
 # 不写回 welding.db 避免污染演示叙事（demo 仍是 ~155 条真实演示历史）。
-DATASET_PATH = DOCS_DIR / "temporal_training_data.csv"
+DATASET_PATH = ARTIFACTS_DIR / "temporal_training_data.csv"
 # 训练完成后落盘的 PyTorch state_dict——production 启动时 _load_pretrained() 来 load 它，
 # 跳过冷启动的 lazy train，等于把这次离线训练的权重直接部署到线上。
-WEIGHTS_PATH = DOCS_DIR / "temporal_model.pt"
+WEIGHTS_PATH = ARTIFACTS_DIR / "temporal_model.pt"
+# 仓库根用于把绝对路径写成相对路径塞进 metrics.json，方便文档引用
+REPO_ROOT = Path(backend_dir).parent
 
 
 def generate_student_rows(profile: dict, n: int, seed: int) -> list:
@@ -173,7 +177,7 @@ def main():
         print(f"  {profile['sid']} {profile['name']}: "
               f"weak={profile.get('weak') or '-':<7} base={profile['base']}→+{profile['delta']}")
 
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     import csv as _csv
     with DATASET_PATH.open("w", encoding="utf-8", newline="") as f:
         writer = _csv.DictWriter(f, fieldnames=list(csv_rows[0].keys()))
@@ -236,7 +240,7 @@ def main():
         print(f"  {name:5s}  n={m['samples']:4d}  "
               f"MSE={m['mse']:.5f}  MAE={m['mae_score']:.2f}fen  R2={m['r2']:.4f}")
 
-    DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
     # 把训练后的 state_dict 落盘成 .pt——这才是"训练产物"的核心。production 启动
     # 时 services/prediction/temporal_model._load_pretrained() 会读这个文件做 warm start。
@@ -263,7 +267,7 @@ def main():
         "val": val_metrics,
         "test": test_metrics,
         "model_params": int(sum(p.numel() for p in model.parameters())),
-        "weights_path": str(WEIGHTS_PATH.relative_to(Path(backend_dir).parent)).replace("\\", "/"),
+        "weights_path": str(WEIGHTS_PATH.relative_to(REPO_ROOT)).replace("\\", "/"),
         "weights_size_kb": round(weights_size_kb, 2),
     }
     METRICS_PATH.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
