@@ -2,6 +2,7 @@
 AI分析服务模块 - 使用OpenAI格式API进行智能分析
 """
 import json
+import re
 import asyncio
 from typing import Dict, List, Any, Optional
 from datetime import datetime
@@ -11,6 +12,60 @@ import logging
 from config import AI_API_KEY, AI_API_BASE_URL, AI_MODEL
 
 logger = logging.getLogger(__name__)
+
+# 远程 LLM 单次调用上限；超过就放弃，回到 fallback 文案。
+# DeepSeek 正常 4-8s 一次，但雷达页串在 AI 后面，3s 卡住整页就明显。
+# Promise.allSettled 在前端把雷达和 AI 并行了，AI 慢一些不阻塞图表，所以这里
+# 收紧到 3s 让"最差体感"始终在 3 秒内出兜底文案。
+AI_REQUEST_TIMEOUT_SECONDS = 3.0
+
+
+def _try_parse_json(text: Optional[str]) -> Optional[Dict[str, Any]]:
+    """先直 json.loads，失败时挑最外层 {...} 再试一次。
+
+    只认 dict，列表 / 字符串 / 数字都判失败——下游 ai_analysis 字段读法要的就是 dict，
+    放行非 dict 会让前端读出 undefined 后悄无声息掉到 fallback 文案。
+    """
+    if not text:
+        return None
+    parsed: Any
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        match = re.search(r"\{[\s\S]*\}", text)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group())
+        except json.JSONDecodeError:
+            return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _build_severity_hint() -> str:
+    """把 defect_types.get_severity_level 的分级列成 prompt 友好的多行文本。"""
+    try:
+        from defect_types import DEFECT_ID_TO_CN, get_severity_level
+    except ImportError:
+        return ""
+    buckets: Dict[str, List[str]] = {"严重": [], "中等": [], "轻微": []}
+    for id_, cn_name in DEFECT_ID_TO_CN.items():
+        if cn_name == "良好焊缝":
+            continue
+        buckets.setdefault(get_severity_level(id_), []).append(cn_name)
+    lines = ["缺陷严重程度参考（建议优先关注严重 / 中等）："]
+    for sev in ("严重", "中等", "轻微"):
+        items = buckets.get(sev) or []
+        if items:
+            lines.append(f"- {sev}：{ '、'.join(items)}")
+    return "\n".join(lines)
+
+
+_SEVERITY_HINT = _build_severity_hint()
+_JSON_REPAIR_REMINDER = (
+    "上次输出无法解析为 JSON。请只输出一个 JSON 对象本身，不要 markdown 代码块、"
+    "不要解释文字、不要任何前后缀。严格按上面给出的字段名和 schema。"
+)
 
 class AIAnalysisService:
     """AI分析服务类 - 使用统一配置的API"""
@@ -36,8 +91,13 @@ class AIAnalysisService:
         else:
             print("警告: 未配置API密钥，AI分析功能将使用备用响应")
 
-    def _call_openai_api(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> Optional[str]:
-        """调用OpenAI兼容API"""
+    def _call_openai_api(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 1000,
+        timeout: float = AI_REQUEST_TIMEOUT_SECONDS,
+    ) -> Optional[str]:
+        """调用OpenAI兼容API；timeout 走 OpenAI SDK 的 per-request 超时，触发后立即返回 None。"""
         if not self.client:
             logger.warning("没有可用的API密钥，返回备用响应")
             return None
@@ -48,17 +108,44 @@ class AIAnalysisService:
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=0.7,
-                stream=False
+                stream=False,
+                timeout=timeout,
             )
-            logger.info(f"AI API调用成功")
+            logger.info("AI API调用成功")
             return response.choices[0].message.content
         except Exception as e:
             logger.error(f"AI API调用失败: {e}")
             return None
 
-    async def _call_openai_api_async(self, messages: List[Dict[str, str]], max_tokens: int = 1000) -> Optional[str]:
+    async def _call_openai_api_async(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int = 1000,
+        timeout: float = AI_REQUEST_TIMEOUT_SECONDS,
+    ) -> Optional[str]:
         """同步调用挪到线程池，别占住主循环"""
-        return await asyncio.to_thread(self._call_openai_api, messages, max_tokens)
+        return await asyncio.to_thread(self._call_openai_api, messages, max_tokens, timeout)
+
+    async def _call_with_json_retry(
+        self,
+        messages: List[Dict[str, str]],
+        max_tokens: int,
+    ) -> Optional[Dict[str, Any]]:
+        """跑一次 LLM 调用 + JSON 解析；第一次拿到非法 JSON 时追加 reminder 重试一次。"""
+        response = await self._call_openai_api_async(messages, max_tokens=max_tokens)
+        parsed = _try_parse_json(response)
+        if parsed is not None:
+            return parsed
+        if not response:
+            return None
+
+        logger.warning("AI 第一次输出无法解析为 JSON，追加 schema reminder 重试")
+        retry_messages = list(messages) + [
+            {"role": "assistant", "content": response},
+            {"role": "user", "content": _JSON_REPAIR_REMINDER},
+        ]
+        retry_response = await self._call_openai_api_async(retry_messages, max_tokens=max_tokens)
+        return _try_parse_json(retry_response)
 
     async def analyze_latest_scores(self, scores: Dict[str, float]) -> Dict[str, Any]:
         """基于最新检测分数进行AI分析"""
@@ -141,11 +228,15 @@ class AIAnalysisService:
         {json.dumps([{'date': d.get('timestamp', ''), 'score': d.get('total_score', 0)} for d in historical_data[-10:]], ensure_ascii=False)}
         """
 
+        system_content = (
+            "你是一个专业的焊接技术分析师，擅长分析焊接数据并预测学习趋势。"
+            "请基于提供的数据进行智能分析，给出专业的预测和建议。"
+        )
+        if _SEVERITY_HINT:
+            system_content = f"{system_content}\n\n{_SEVERITY_HINT}"
+
         messages = [
-            {
-                "role": "system",
-                "content": "你是一个专业的焊接技术分析师，擅长分析焊接数据并预测学习趋势。请基于提供的数据进行智能分析，给出专业的预测和建议。"
-            },
+            {"role": "system", "content": system_content},
             {
                 "role": "user",
                 "content": f"""请分析以下焊接学习数据，提供智能预测分析：
@@ -173,33 +264,14 @@ class AIAnalysisService:
             }
         ]
 
-        ai_response = await self._call_openai_api_async(messages, max_tokens=1500)
-
-        if ai_response:
-            try:
-                # 尝试解析AI返回的JSON
-                # 先尝试直接解析
-                try:
-                    ai_analysis = json.loads(ai_response)
-                except json.JSONDecodeError:
-                    # 如果失败，尝试提取JSON部分（可能包含额外文字）
-                    import re
-                    json_match = re.search(r'\{[\s\S]*\}', ai_response)
-                    if json_match:
-                        ai_analysis = json.loads(json_match.group())
-                    else:
-                        raise json.JSONDecodeError("无法提取JSON", ai_response, 0)
-
-                return {
-                    "ai_analysis": ai_analysis,
-                    "analysis_time": datetime.now().isoformat(),
-                    "data_source": "AI_POWERED"
-                }
-            except json.JSONDecodeError:
-                logger.error("AI返回的不是有效JSON格式")
-                return self._get_fallback_prediction_analysis()
-        else:
+        ai_analysis = await self._call_with_json_retry(messages, max_tokens=1500)
+        if ai_analysis is None:
             return self._get_fallback_prediction_analysis()
+        return {
+            "ai_analysis": ai_analysis,
+            "analysis_time": datetime.now().isoformat(),
+            "data_source": "AI_POWERED",
+        }
 
     async def analyze_lesson_plan_data(self, lesson_data: Dict[str, Any]) -> Dict[str, Any]:
         """分析报告数据，生成AI教学建议"""
@@ -260,33 +332,14 @@ class AIAnalysisService:
             }
         ]
 
-        ai_response = await self._call_openai_api_async(messages, max_tokens=2000)
-
-        if ai_response:
-            try:
-                # 尝试解析AI返回的JSON
-                # 先尝试直接解析
-                try:
-                    ai_analysis = json.loads(ai_response)
-                except json.JSONDecodeError:
-                    # 如果失败，尝试提取JSON部分（可能包含额外文字）
-                    import re
-                    json_match = re.search(r'\{[\s\S]*\}', ai_response)
-                    if json_match:
-                        ai_analysis = json.loads(json_match.group())
-                    else:
-                        raise json.JSONDecodeError("无法提取JSON", ai_response, 0)
-
-                return {
-                    "ai_analysis": ai_analysis,
-                    "analysis_time": datetime.now().isoformat(),
-                    "data_source": "AI_POWERED"
-                }
-            except json.JSONDecodeError:
-                logger.error("AI返回的不是有效JSON格式")
-                return self._get_fallback_lesson_analysis()
-        else:
+        ai_analysis = await self._call_with_json_retry(messages, max_tokens=2000)
+        if ai_analysis is None:
             return self._get_fallback_lesson_analysis()
+        return {
+            "ai_analysis": ai_analysis,
+            "analysis_time": datetime.now().isoformat(),
+            "data_source": "AI_POWERED",
+        }
 
     def _get_fallback_prediction_analysis(self) -> Dict[str, Any]:
         """预测分析的备用响应"""

@@ -198,9 +198,15 @@ class IntegratedWeldDetector:
                     "top_y": int(result["top_y"]),
                     "bottom_y": int(result["bottom_y"]),
                     "center_y": int(result["center_y"]),
+                    "rejected_count": int(result.get("rejected_count", 0)),
                 }
             else:
-                return {"width_mm": 0, "score": 0, "error": "未检测到焊缝"}
+                return {
+                    "width_mm": 0,
+                    "score": 0,
+                    "error": "未检测到焊缝",
+                    "rejected_count": int(result.get("rejected_count", 0)),
+                }
         except Exception as e:
             return {"width_mm": 0, "score": 0, "error": str(e)}
 
@@ -497,6 +503,7 @@ class IntegratedWeldDetector:
             "seam_theta": results["defects"].get("seam_theta", 0.0),
             "roi_bbox": results["defects"].get("roi_bbox"),
             "dropped_outside": results["defects"].get("dropped_outside", 0),
+            "width_rejected_count": results["width"].get("rejected_count", 0),
             "processing_time": time.time() - start_time,
         }
 

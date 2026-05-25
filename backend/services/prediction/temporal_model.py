@@ -6,12 +6,24 @@
 长度采样窗口，让模型见过多种 context size。CPU 上几秒训完，推理几毫秒。
 """
 
+import json
+import logging
 import threading
+from datetime import datetime
+from pathlib import Path
 from typing import List, Optional, Sequence
 
 import numpy as np
 import torch
 import torch.nn as nn
+
+logger = logging.getLogger(__name__)
+
+# docs/ 落盘训练曲线 + metrics，给答辩页和 docs/algorithm_upgrades.md 引用
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent.parent
+_DOCS_DIR = _REPO_ROOT / "docs"
+_CURVE_PATH = _DOCS_DIR / "temporal_training_curve.png"
+_METRICS_PATH = _DOCS_DIR / "temporal_metrics.json"
 
 
 # 预测的步数
@@ -113,15 +125,81 @@ def train_from_records(records: Sequence, epochs: int = DEFAULT_EPOCHS, lr: floa
         for X, y in buckets.values()
     ]
 
+    epoch_losses: List[float] = []
     model.train()
     for _ in range(epochs):
+        ep_losses: List[float] = []
         for X, y in tensor_buckets:
             optim.zero_grad()
             loss = loss_fn(model(X), y)
             loss.backward()
             optim.step()
+            ep_losses.append(float(loss.item()))
+        epoch_losses.append(float(np.mean(ep_losses)) if ep_losses else float("nan"))
     model.eval()
+
+    sample_count = int(sum(len(x) for x, _ in buckets.values()))
+    _dump_training_artifacts(model, tensor_buckets, epoch_losses, sample_count)
     return model
+
+
+def _dump_training_artifacts(
+    model: WeldTemporalCNN,
+    tensor_buckets: Sequence,
+    epoch_losses: Sequence[float],
+    sample_count: int,
+) -> None:
+    """每次重训完都更新 docs/ 下的曲线 + metrics；任何 IO 失败都不影响训练成功。"""
+    try:
+        _DOCS_DIR.mkdir(parents=True, exist_ok=True)
+
+        # 训练集自评 R²（数据量小不切验证集，标清楚口径就好）
+        with torch.no_grad():
+            preds: List[np.ndarray] = []
+            targets: List[np.ndarray] = []
+            for X, y in tensor_buckets:
+                preds.append(model(X).cpu().numpy())
+                targets.append(y.cpu().numpy())
+        p = np.concatenate(preds, axis=0).reshape(-1)
+        t = np.concatenate(targets, axis=0).reshape(-1)
+        ss_res = float(np.sum((t - p) ** 2))
+        ss_tot = float(np.sum((t - t.mean()) ** 2)) if t.size else 0.0
+        r2_train = 1.0 - ss_res / ss_tot if ss_tot > 0 else float("nan")
+
+        metrics = {
+            "trained_at": datetime.now().isoformat(timespec="seconds"),
+            "sample_count": sample_count,
+            "epochs": len(epoch_losses),
+            "final_loss": epoch_losses[-1] if epoch_losses else None,
+            "min_loss": min(epoch_losses) if epoch_losses else None,
+            "r2_train": r2_train,
+            "feature_dim": FEATURE_DIM,
+            "forecast_size": FORECAST_SIZE,
+            "windows": list(TRAIN_WINDOWS),
+        }
+        _METRICS_PATH.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        # matplotlib 是可选依赖；没装就只保留 metrics.json
+        try:
+            import matplotlib
+            # force=True 容忍 pyplot 已被别处 import 过的情况（比如 ultralytics 内置 plot）
+            matplotlib.use("Agg", force=True)
+            import matplotlib.pyplot as plt
+        except ImportError:
+            logger.info("matplotlib 不可用，跳过训练曲线 PNG")
+            return
+
+        fig, ax = plt.subplots(figsize=(6, 3.5), dpi=120)
+        ax.plot(range(1, len(epoch_losses) + 1), epoch_losses, color="#3B82F6")
+        ax.set_xlabel("epoch")
+        ax.set_ylabel("MSE loss")
+        ax.set_title(f"1D-CNN training loss (n={sample_count}, R²={r2_train:.3f})")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        fig.savefig(_CURVE_PATH)
+        plt.close(fig)
+    except Exception as e:
+        logger.warning(f"训练曲线落盘失败（不影响模型）: {e}")
 
 
 def forecast(model: WeldTemporalCNN, recent_records: Sequence) -> List[float]:

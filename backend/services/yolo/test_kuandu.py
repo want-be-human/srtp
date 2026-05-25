@@ -48,7 +48,7 @@ def test_algorithm():
     print("=" * 50)
 
     # 创建检测器
-    detector = PreciseWeldDetector(debug=True, image_height_cm=15.0)
+    detector = PreciseWeldDetector(debug=True)
 
     # 创建测试图像
     test_image = create_test_image()

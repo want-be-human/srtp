@@ -1,6 +1,7 @@
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# 从 backend/tests/ 反推 backend/ 根，让 database / models 等顶层模块能直接 import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from database import SessionLocal
 import models

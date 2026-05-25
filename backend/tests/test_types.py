@@ -4,6 +4,11 @@
 测试数据类型转换
 """
 
+import sys
+import os
+# 从 backend/tests/ 反推 backend/，让 services.* / database 等模块直接 import
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import json
 import numpy as np
 from services.yolo.kuandu_jiance_qiqi import PreciseWeldDetector

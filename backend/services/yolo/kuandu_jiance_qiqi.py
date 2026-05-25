@@ -17,23 +17,30 @@ _MIN_CONTRAST = 25
 _MAX_CANDIDATES = 5
 
 
-def _pick_best_row(row_brightness: np.ndarray, fusion_score: np.ndarray) -> int:
-    """按 fusion_score 降序找第一个通过暗-亮-暗连续性的行；都没过就退回最亮行。"""
+def _pick_best_row(row_brightness: np.ndarray, fusion_score: np.ndarray) -> Tuple[int, int]:
+    """按 fusion_score 降序找第一个通过暗-亮-暗连续性的行；都没过就退回最亮行。
+
+    返回 (best_y, rejected_count)。rejected_count 是被暗-亮-暗筛掉的候选数，
+    透传到 MJPEG 角标可视化，评委一眼看出"拟态过滤"在干活。
+    """
     region_height = len(row_brightness)
     if region_height < 2 * _FAR_OFFSET + 1:
         # 搜索带太窄不足以做两侧采样，直接最亮
-        return int(np.argmax(fusion_score))
+        return int(np.argmax(fusion_score)), 0
 
     candidates = np.argsort(fusion_score)[::-1][:_MAX_CANDIDATES]
+    rejected = 0
     for cand in candidates:
         if cand < _FAR_OFFSET or cand >= region_height - _FAR_OFFSET:
+            rejected += 1
             continue
         center_b = row_brightness[cand]
         above = row_brightness[cand - _FAR_OFFSET : cand - _NEAR_OFFSET].mean()
         below = row_brightness[cand + _NEAR_OFFSET + 1 : cand + _FAR_OFFSET + 1].mean()
         if center_b - above >= _MIN_CONTRAST and center_b - below >= _MIN_CONTRAST:
-            return int(cand)
-    return int(np.argmax(fusion_score))
+            return int(cand), rejected
+        rejected += 1
+    return int(np.argmax(fusion_score)), rejected
 
 
 # 未标定兜底时的假设画面高度（cm），仅用于让宽度模块仍能跑出一个数；
@@ -90,7 +97,7 @@ class PreciseWeldDetector:
         fusion_score = row_brightness * np.abs(row_gradient)
 
         # 暗-亮-暗连续性筛选，过滤孤立亮斑（反光、飞溅）
-        best_y = _pick_best_row(row_brightness, fusion_score)
+        best_y, rejected_count = _pick_best_row(row_brightness, fusion_score)
         best_score = fusion_score[best_y]
 
         actual_y = top + best_y
@@ -156,6 +163,7 @@ class PreciseWeldDetector:
             "width": int(width),
             "found": bool(best_score > 0.01),
             "calibrated": bool(self.pixels_per_mm is not None),
+            "rejected_count": int(rejected_count),
         }
 
     def _get_max_continuous_length(self, row: np.ndarray) -> int:

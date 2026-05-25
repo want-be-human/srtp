@@ -480,6 +480,7 @@ def inference_loop():
                             "seam_theta": results.get("seam_theta", 0.0),
                             "roi_bbox": results.get("roi_bbox"),
                             "dropped_outside": results.get("dropped_outside", 0),
+                            "width_rejected_count": results.get("width_rejected_count", 0),
                         }
                     else:
                         import random
@@ -1018,7 +1019,13 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
 
                 width_mm = current_detection_data.get("actual_width", 0)
                 width_score = current_detection_data.get("width", 0)
-                cv2.putText(display_frame, f'Width: {width_mm:.1f}mm ({width_score:.1f})',
+                width_rejected = current_detection_data.get("width_rejected_count", 0)
+                width_label = (
+                    f'Width: {width_mm:.1f}mm ({width_score:.1f}) | rejected rows: {width_rejected}'
+                    if width_rejected else
+                    f'Width: {width_mm:.1f}mm ({width_score:.1f})'
+                )
+                cv2.putText(display_frame, width_label,
                           (10, 110), font, 0.6, (255, 255, 255), 2)
 
                 defect_score = current_detection_data.get("defect_type", 0)

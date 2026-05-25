@@ -289,26 +289,27 @@ export function PredictionDashboardContent() {
       setLoading(false)
 
       if (!isBackground) {
-        setTimeout(async () => {
-          try {
-            setAiLoading(true)
-
-            const aiResponse = await fetch(`${API_ENDPOINTS.PREDICT_AI_ANALYSIS}${studentQuery}`)
-            if (aiResponse.ok) {
-              const aiData = await aiResponse.json()
-              setAiAnalysis(aiData)
-            }
-
-            const radarResponse = await fetch(`${API_ENDPOINTS.PREDICT_AI_RADAR}${studentQuery}`)
-            if (radarResponse.ok) {
-              const radarResult = await radarResponse.json()
-              setRadarData(radarResult)
-            }
-          } catch (aiError) {
-            console.warn("获取AI分析失败（不影响主功能）:", aiError)
-          } finally {
-            setAiLoading(false)
-          }
+        // 雷达只走 DB 聚合（50-100ms），不能被远程 AI 接口（3-10s）挡着。
+        // 两个 fetch 各自 await + setState，aiLoading 单独绑 AI promise 表达 AI 框的 loading。
+        setAiLoading(true)
+        setTimeout(() => {
+          fetch(`${API_ENDPOINTS.PREDICT_AI_ANALYSIS}${studentQuery}`)
+            .then(async (r) => {
+              if (!r.ok) return
+              setAiAnalysis(await r.json())
+            })
+            .catch((e) => {
+              console.warn("获取AI分析失败（不影响主功能）:", e)
+            })
+            .finally(() => setAiLoading(false))
+          fetch(`${API_ENDPOINTS.PREDICT_AI_RADAR}${studentQuery}`)
+            .then(async (r) => {
+              if (!r.ok) return
+              setRadarData(await r.json())
+            })
+            .catch((e) => {
+              console.warn("获取雷达数据失败:", e)
+            })
         }, 100)
       }
     } catch (error) {
