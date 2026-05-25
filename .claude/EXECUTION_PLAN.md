@@ -8,7 +8,7 @@
 > 同时确认两条硬约束：（1）检测方式只有单目 RGB 摄像头，无激光/X 光/声学/深度传感器；
 > （2）综合评分公式 `0.3·光滑 + 0.3·宽 + 0.4·缺陷` 是学校规定，权重不可改。
 
-冻结日：2026-05-28（国赛）。本文最后修订：2026-05-25。
+冻结日：2026-05-28（国赛）。本文最后修订：2026-05-25 v5.1（数据规则化 + humanize + pyc 清理已落地，剩余 Day 1/2/3 代码修补在新对话中执行）。
 
 ---
 
@@ -214,7 +214,25 @@
 
 ### Phase E.v2 — 修补 + 数据规则化（2026-05-25 起，3 天）
 
-#### 演示数据规则化（已完成 / Day 1 第一项）
+> **进度状态（2026-05-25 21:00 切对话前）**
+>
+> | 项 | 状态 | commit |
+> |---|---|---|
+> | 演示数据规则化（v5 seed + 新 ID/姓名 + [20,100] 边界） | ✅ | `fef756a` |
+> | 算法升级文档 §14/§15 补齐 + E-P3-1 commit hash | ✅ | `2b443be` |
+> | humanize 历史代码三批清理（-484 行 AI 痕迹） | ✅ | `bc6b679` + `39b8451` + `d945ec2` |
+> | A5 .gitignore + pyc 解 track + welding.db 推送 | ✅ | `2a3fb82` |
+> | E-P0-3.v2 对比页雷达接通 | ⏳ Day 1 待办 | — |
+> | Mock 5 处 UI 标注 | ⏳ Day 1 待办 | — |
+> | E-P1-1.v2 ROI 可视化 | ⏳ Day 2 待办 | — |
+> | E-P1-3.v2 标定 4 漏洞 | ⏳ Day 2 待办 | — |
+> | **雷达图慢加载修复（新增）** | ⏳ Day 3 待办 | — |
+> | E-P3-2.v2 AI schema 重试 | ⏳ Day 3 待办 | — |
+> | E-P2-1.v2 训练曲线落盘 | ⏳ Day 3 待办 | — |
+> | E-P1-2.v2 暗-亮-暗计数 | ⏳ Day 3 待办 | — |
+> | A6 tests/ 迁移 | ⏳ Day 3 待办 | — |
+
+#### 演示数据规则化（✅ 已完成）
 
 > 把演示数据当真实数据用，所以必须对齐真实系统的边界、命名、画像。下面是 v5 拍定的规则。
 
@@ -254,10 +272,10 @@ ID 格式 `202411xxxx`：2024 入学 + 11 月份/班号 + 4 位故意不连号�
   - 同时拉 self / opponent 两次（或后端加 `student_ids[]` 批量端点）
   - 副标题 "间距/熔深/速度为真实分数代理估算" 删掉
 
-- **A5 .gitignore + pyc 清理** 🔴
-  - 写根 `.gitignore` 屏蔽 `__pycache__/`、`*.pyc`、`*.pyo`、`welding.db`、`.env`、`*.log`
-  - `git rm --cached -r backend/**/__pycache__ backend/welding.db`
-  - **welding.db 要不要清** 待和用户确认 — 现在 db 里就是演示数据，团队拉下来直接能用 vs 团队跑 seed 脚本自己生成
+- ~~**A5 .gitignore + pyc 清理** 🔴~~ ✅ commit `2a3fb82`
+  - 根 `.gitignore` 屏蔽 `__pycache__/`、`*.py[cod]`、`.venv/`、`*.log`、`runs/`
+  - `welding.db` **保留追踪**（v5 决策：演示数据库直接随仓库分发，团队拉下来跑）
+  - 顺手 push 了一次 v5 seed 后的 db
 
 - **Mock 路径 5 处 UI 标注**：
   1. `yolo_realtime.py::inference_loop`（YOLO 不可用模拟数据）→ 响应里加 `is_mock: true` + 前端检测页右上红色 badge「YOLO 离线 · 演示数据」
@@ -284,6 +302,18 @@ ID 格式 `202411xxxx`：2024 入学 + 11 月份/班号 + 4 位故意不连号�
 
 #### Day 3 — 黄色 + 绿色
 
+- **预测页雷达图慢加载修复** 🟡 ⭐ 新增（2026-05-25 用户反馈）
+  - **问题**：首次进智能预测页 → 雷达图 5-10 秒后才出来
+  - **根因**：[prediction-dashboard.tsx:288-309](front/components/prediction/prediction-dashboard.tsx#L288-L309) 把 `/predict/ai-radar-data` 串行 await 在 `/predict/ai-analysis` 后面；后者调 DeepSeek 远程接口 3-10s，雷达本身只要 50-100ms
+  - **修复 1（必做）**：`Promise.allSettled([aiPromise, radarPromise])` 并行起步，雷达自己 100ms 出来；AI 失败/慢不再阻塞雷达
+  - **修复 2（必做）**：`ai_analysis.py` 加 `httpx.Timeout(3.0)`，超时立即走 fallback；保证最差 3s 出兜底文案
+  - **修复 3（可选）**：loading 期间渲染骨架雷达，避免视觉假死
+  - **代码点位**：
+    - 前端：[front/components/prediction/prediction-dashboard.tsx:282-310](front/components/prediction/prediction-dashboard.tsx#L282-L310)
+    - 后端 AI：[backend/ai_analysis.py](backend/ai_analysis.py) `_call_openai_api`
+    - 后端雷达端点：[backend/api/predict.py:894-913](backend/api/predict.py#L894-L913)（无需改）
+  - **预计**：0.5 天，跟 E-P3-2 AI schema 重试一起做
+
 - **E-P3-2.v2 AI schema 重试** 🟡
   - `ai_analysis.py` 解析失败时把"上次输出无法解析为 JSON，请严格按 schema"加到 user message 重试 1 次
   - prompt 附带 `severity_map`（`defect_types.py::get_severity_level`）
@@ -302,15 +332,17 @@ ID 格式 `202411xxxx`：2024 入学 + 11 月份/班号 + 4 位故意不连号�
   - 演示前一天用真摄像头按 5-10 次保存键，让 TTA 真写 bbox 进库
   - 让评委看到的热图既有 mock 历史画像、又有真实采集点
 
-#### 工作量汇总（v5）
+#### 工作量汇总（v5，2026-05-25 切对话前更新）
 
-| 阶段 | 项数 | 工作量 |
-|---|---|---|
-| 数据规则化 | 1 套（已完成）| 0.5 天 |
-| Day 1 红 | 3 | 1 天 |
-| Day 2 红 | 2 | 1 天 |
-| Day 3 黄+绿 | 4 | 1 天 |
-| **合计剩余** | **9** | **3 天**，刚好到 2026-05-28 |
+| 阶段 | 项数 | 工作量 | 状态 |
+|---|---|---|---|
+| 数据规则化 | 1 套 | 0.5 天 | ✅ `fef756a` |
+| humanize 历史代码三批 | 3 批 -484 行 | 0.5 天 | ✅ `bc6b679 + 39b8451 + d945ec2` |
+| A5 .gitignore + pyc + db | 1 套 | 0.5 天 | ✅ `2a3fb82` |
+| Day 1 红（剩余：E-P0-3.v2 + Mock 5 处标注） | 2 | 1 天 | ⏳ |
+| Day 2 红（E-P1-1.v2 + E-P1-3.v2） | 2 | 1 天 | ⏳ |
+| Day 3 黄+绿（雷达慢 + E-P3-2.v2 + E-P2-1.v2 + E-P1-2.v2 + A6） | 5 | 1 天 | ⏳ |
+| **剩余实际工作量** | **9** | **3 天** | 到 2026-05-28 |
 
 ### Phase F — 冻结
 
@@ -365,8 +397,9 @@ ID 格式 `202411xxxx`：2024 入学 + 11 月份/班号 + 4 位故意不连号�
 | 19 | 学生姓名 | 6 人挑接近真实学生姓名风格：陈思远/王俊杰/林雨晴/赵嘉宁/黄子睿/周文静 |
 | 20 | 分数生成边界 | 单项分 `[20, 100]`、10% 样本宽度越界触发保底 20、综合按严格权重算出；不再 v4 那种全部 [50,98] 的"美容"区间 |
 | 21 | Mock 标注 | 除 DB 外 5 处 mock 全部加 UI 标识（YOLO 离线 badge、预测 fallback 提示、lesson-plan 示例徽标、radar 暂无数据、detect-frame 兑底）；演示时评委一眼看清「哪是真 / 哪是兜底」 |
-| 22 | welding.db 是否进版本控制 | 待和用户确认（v4 之前是 tracked，v5 准备考虑 untrack） |
+| 22 | welding.db 进版本控制 | **保留追踪**（`2a3fb82` 决策）：team 拉下来就能跑，不依赖 seed 脚本；演示数据库就是 demo 的一部分 |
 | 23 | 审计漏洞修补节奏 | 3 天分 Day 1 / Day 2 / Day 3 三套件，每套件 simplify + commit + 用户授权双推 |
+| 24 | 雷达图慢加载 | 前端 `/predict/ai-radar-data` 串行 await 在 AI 分析后面 → 改成 `Promise.allSettled` 并行 + AI 加 3s timeout |
 
 ---
 
@@ -417,13 +450,14 @@ Claude 不写、不接、不调通联：
 
 1. ✅ Phase E 11 项 P0-P3 全部完成
 2. ✅ Phase E 审计完成，发现 4 红 / 3 黄 / 1 绿弱点
-3. ✅ 演示数据规则化完成（seed_students/seed_demo_data/seed_demo_bboxes 全部新 ID/姓名 + 边界对齐）
-4. **当前**：升级 EXECUTION_PLAN / PROJECT_MEMORY / algorithm_upgrades 文档到 v5（本次工作）
-5. 推送文档修订到双远程（文档改动可直接双推，无需用户审核）
-6. Day 1 代码套件：A5 .gitignore + E-P0-3 对比页雷达 + Mock 标注 5 处 → simplify → commit → 用户授权双推
-7. Day 2 代码套件：E-P1-1 ROI 可视化 + E-P1-3 标定 4 漏洞 → simplify → commit → 双推
-8. Day 3 代码套件：E-P3-2 + E-P2-1 训练曲线 + E-P1-2 计数 + A6 → simplify → commit → 双推
-9. Phase F 冻结准备：连跑 3 遍演示 + 当天真摄像头按 5-10 次保存键补充热图真实数据 + 备份
+3. ✅ 演示数据规则化完成（seed_students/seed_demo_data/seed_demo_bboxes 全部新 ID/姓名 + 边界对齐）`fef756a`
+4. ✅ 文档 v5 升级（algorithm_upgrades §14/§15）`2b443be`
+5. ✅ humanize 历史代码三批清理 `bc6b679 + 39b8451 + d945ec2`
+6. ✅ A5 .gitignore + git rm --cached pyc + welding.db 推送 `2a3fb82`
+7. **新对话起点**：Day 1 代码套件 = **E-P0-3.v2 对比页雷达** + **Mock 5 处 UI 标注** → simplify → commit → 用户授权双推
+8. Day 2 代码套件：E-P1-1 ROI 可视化 + E-P1-3 标定 4 漏洞 → simplify → commit → 双推
+9. Day 3 代码套件：**雷达图慢加载修复 + E-P3-2 AI 重试 + E-P2-1 训练曲线 + E-P1-2 计数 + A6** → simplify → commit → 双推
+10. Phase F 冻结准备：连跑 3 遍演示 + 当天真摄像头按 5-10 次保存键补充热图真实数据 + 备份
 
 ### 参考资料
 

@@ -403,9 +403,25 @@ Phase E P0-P3 11 项全部完成后做了一轮全栈审计（3 路 agent 并行
 5. `prediction-dashboard.tsx::EMPTY_SKILL_DATA` → 副标题灰字「暂无数据」
 
 **Phase E.v2 修补节奏**（3 天到冻结日 2026-05-28）：
-- **Day 1**（红色第一批）：A5 .gitignore + E-P0-3 对比页雷达接通 + Mock 标注 5 处
-- **Day 2**（红色第二批）：E-P1-1 ROI MJPEG 可视化 + E-P1-3 标定 4 漏洞
-- **Day 3**（黄+绿）：E-P3-2 AI 重试 + E-P2-1 训练曲线 + E-P1-2 计数 + A6 tests/ 迁移
+- ✅ **预备**（已完成）：演示数据规则化 `fef756a` + 文档 v5 升级 `2b443be` + humanize 三批清理 `bc6b679 + 39b8451 + d945ec2` + A5 .gitignore + pyc + welding.db `2a3fb82`
+- ⏳ **Day 1**（红色第一批，剩余）：E-P0-3 对比页雷达接通 + Mock 标注 5 处
+- ⏳ **Day 2**（红色第二批）：E-P1-1 ROI MJPEG 可视化 + E-P1-3 标定 4 漏洞
+- ⏳ **Day 3**（黄+绿）：**预测页雷达图慢加载修复 (新增)** + E-P3-2 AI 重试 + E-P2-1 训练曲线 + E-P1-2 计数 + A6 tests/ 迁移
+
+**雷达图慢加载根因**（2026-05-25 用户反馈，加入 Day 3）：
+- 前端 [prediction-dashboard.tsx:288-309](front/components/prediction/prediction-dashboard.tsx#L288-L309) 把 `/predict/ai-radar-data` 串行 await 在 `/predict/ai-analysis` 之后
+- AI 分析调远程 DeepSeek 3-10s，雷达本身只要 50-100ms，被堵在后面
+- 修复 = `Promise.allSettled` 并行 + AI 接口加 `httpx.Timeout(3.0)`
+
+**新对话起点**：直接看 PLAN §8.7 起，做 Day 1 代码套件（E-P0-3 对比页雷达 + Mock 标注 5 处）。
+
+**最近一批 commit**：
+- `fef756a` docs(plan+memory+algo): v5 审计 + 演示数据规则化（新 ID/姓名/分数边界）
+- `2b443be` docs(algo): 追加 §14/§15 算法升级条目（E-P3-2/3）+ 补 E-P3-1 commit hash
+- `bc6b679` refactor(yolo): 清掉 zonghe/kuandu/guanghuadu 三件套 AI 痕迹
+- `39b8451` refactor(api+predict): 清掉后端 API 层 AI 痕迹
+- `d945ec2` refactor(front): 清掉 prediction-dashboard / yolo-realtime-detector AI 痕迹
+- `2a3fb82` chore: 加根 .gitignore + git rm --cached pyc + 刷新演示 db
 
 ### v4 — 2026-05-22 起 国赛 Phase E 算法升级
 
