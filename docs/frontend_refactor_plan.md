@@ -132,7 +132,7 @@ P1 3DGS 渐进形态，然后 P2 一组，最后 P3。
   启动时若发现 `welding.db` 不存在就从 `welding.db.seed` 复制一份
 - 这是 destructive 操作（标定数据放在不入仓的 db 文件里），明天动手前先备份本地 db
 
-### 9.3 高斯泼溅“摄像头采集”是 UI 假动画，不调摄像头
+### 9.3 高斯泼溅“摄像头采集”是 UI 假动画，不调摄像头（决策已定）
 
 经查 `gaussian-splat-viewer.tsx`：
 - 没有 `getUserMedia` / `<video>` / `navigator.mediaDevices` 调用
@@ -144,23 +144,39 @@ P1 3DGS 渐进形态，然后 P2 一组，最后 P3。
 所以学生进检测页看到“正在采集”不会真的开摄像头，**全黑跟室内光线无关**，全黑的真正
 原因就是 9.1 那个 404 让点云压根没下下来。
 
-要不要让它真的调摄像头是个产品决策：
-- 方案 A（现状）：保留假动画，后端走预生成 `.ply`，演示稳定，但学生“看不到自己的板子”
-- 方案 B：真接摄像头，前端 `getUserMedia` 抓 24 角度图传后端，后端跑 COLMAP +
-  gaussian-splatting 训练。教学场景训练时长 10-30 分钟，跟“现场演示”不兼容
-- 方案 C：折中——前端调摄像头**只拍封面预览图**作为 viewer 的 thumbnail / 角标，
-  实际重建仍走预生成 `.ply`，给用户“我的板子被拍到了”的感知
+**当前决策（2026-05-26 敲定）**：
 
-倾向方案 C。如果走 C，UI 上要加摄像头选择器（同 `YOLORealtimeDetector` 里的
-`CameraSelector`），让用户选用哪个摄像头拍封面。
+实际相机轨道（机械臂 / 转台）还没建好，COLMAP + 3DGS 实时训练管线也没接通，**保留假
+动画 + 预生成 `.ply` 这套现状**。但前端能先准备的接入工作要做好，等硬件就绪能直接替换：
 
-### 9.4 高斯泼溅摄像头选择器（仅在采用方案 C 时做）
+- 假动画 + 现成 `.ply` 渲染保留，作为现阶段对外展示的全部
+- `PIPELINE_STAGES` 文案不改（"从摄像头采集"先继续讲，UI 层面不区分真假）
+- 摄像头选择器 / 预留的本地缓存 / `getUserMedia` 调用点都把代码先写好，但**接口
+  默认关闭**——等硬件 + 后端管线一通就 flip 开关切活路径
 
-- 复用 `front/components/detection/camera-selector.tsx` + `lib/camera-config.ts`
-- 在 `GaussianSplatViewer` 顶部加 `<Settings />` 按钮打开同一个 selector dialog
-- 选完保存到 `localStorage`（key 区分 `splat_camera_choice` 不复用检测页那把）
-- 抓帧时机：用户点“开始三维重建”时，先 getUserMedia 抓 1 张快照存内存，作为
-  reveal 完成后 viewer 角落的小图
+加速到能现场跑的可行性分析（COLMAP + 3DGS < 1 min 端到端）单独写到
+[`docs/3dgs_acceleration_analysis.md`](./3dgs_acceleration_analysis.md)。
+
+### 9.4 前端预留的硬件接入工作（明天做）
+
+按 9.3 的"先把前端能做的做好"决策，明天落地这些代码骨架：
+
+- **摄像头选择器**：在 `GaussianSplatViewer` 顶部加 `<Settings />` 按钮打开 selector
+  dialog
+  - 复用 `front/components/detection/camera-selector.tsx` + `lib/camera-config.ts`
+  - localStorage key 用 `splat_camera_choice`，不复用检测页那把
+- **采集帧抓取（写代码但默认禁用）**：用户点"开始三维重建"时，逻辑分支由开关决定：
+  - `SPLAT_CAPTURE_ENABLED = false`（当前默认）：直接走假动画 + 预生成 `.ply`
+  - `SPLAT_CAPTURE_ENABLED = true`（未来切换）：`getUserMedia` 抓 24 角度图传后端
+    `/upload-video` endpoint，后端跑训练，前端轮询训练进度替换假动画
+  - 开关位置放 `front/lib/feature-flags.ts`，硬件就位时改一行
+- **本地缓存预留**：把"用户上传的视频" / "训练好的 .ply" 在浏览器 `IndexedDB` 里
+  缓存，重复进 viewer 不重训
+- **训练进度协议预留**：后端要的 `POST /upload-video` 返回 `task_id`，前端
+  `GET /3dgs-status/:task_id` 轮询的协议在 `lib/api.ts` 把 endpoint 常量先加上，
+  实现明天补
+- **路径切换的 UI 反馈**：假动画路径下角标显示"演示模式"，真训练路径下显示
+  "实拍重建"，让用户能区分（也方便后续调试）
 
 ## 10. 风险与未决项
 
