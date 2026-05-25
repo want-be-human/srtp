@@ -251,9 +251,9 @@ export function CameraCalibrationCard() {
                     top: hover.displayY - 96 < 0 ? hover.displayY + 16 : hover.displayY - 96,
                     backgroundImage: `url(${snapshot.dataUrl})`,
                     backgroundRepeat: "no-repeat",
-                    // 原图按 4× 放大铺底，再用负偏移把光标处的像素挪到 80×80 中心
-                    backgroundSize: `${snapshot.width * 4}px ${snapshot.height * 4}px`,
-                    backgroundPosition: `${40 - hover.imageX * 4}px ${40 - hover.imageY * 4}px`,
+                    // 原图按 2.5× 放大铺底，再用负偏移把光标处的像素挪到 80×80 中心
+                    backgroundSize: `${snapshot.width * 2.5}px ${snapshot.height * 2.5}px`,
+                    backgroundPosition: `${40 - hover.imageX * 2.5}px ${40 - hover.imageY * 2.5}px`,
                   }}
                 >
                   <div
