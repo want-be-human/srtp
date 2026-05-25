@@ -42,5 +42,7 @@ backend/scripts/train_temporal_offline.py
 # 临时草稿
 123
 123.txt
+前端重构.md
 *.tmp
 *.bak
+docs/algorithm_upgrades.md

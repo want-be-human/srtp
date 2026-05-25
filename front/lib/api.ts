@@ -55,6 +55,12 @@ export const API_ENDPOINTS = {
   CALIBRATION_SAVE: `${API_BASE_URL}/api/v1/calibration/save`,
   CALIBRATION_CURRENT: `${API_BASE_URL}/api/v1/calibration/current`,
   SNAPSHOT: `${API_BASE_URL}/api/v1/snapshot`,
+
+  // 视频上传 (3DGS)
+  UPLOAD_VIDEO: `${API_BASE_URL}/api/v1/upload-video`,
+
+  // 3DGS 模型
+  MODEL_3DGS: `${API_BASE_URL}/static/3dgs/model_light.ply`,
 };
 
 export default API_BASE_URL;
