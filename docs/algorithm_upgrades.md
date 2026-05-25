@@ -256,25 +256,56 @@ calibrated 标志"的完整闭环交付出来。
 - API 加 `mode=fast|deep` 查询参数；缓存键 `(student_id, mode)` 隔离两条通道
 - 前端用 `ToggleGroup` 切换"快速预测 / 深度预测"
 
-**指标**：
-- 参数量：**1349（5.3 KB / FP32）**
-- 训练时间：130 条 seed × 5 个 window bucket × 80 epoch ≈ 3-5 s on CPU
-- 单次推理：< 10 ms（实测 < 3 ms）
-- 变长输入测试（同一份权重）：
+**指标（v5.1 离线训练完整跑通，详见 [temporal_metrics.json](./temporal_metrics.json) +
+[训练曲线 PNG](./temporal_training_curve.png)）**：
 
-| 输入长度 | 5 步预测 |
-|---|---|
-| 5 | [65.5, 69.1, 63.2, 71.5, 71.8] |
-| 8 | [76.0, 77.4, 74.1, 78.0, 78.4] |
-| 20 | [86.7, 85.9, 85.3, 84.6, 85.1] |
-| 30 | [88.7, 87.5, 87.4, 85.8, 86.3] |
-| 50 | 同 L=30（自动截到 30） |
-| 3 | [85, ..., 85]（不足 MIN，返回中性，上游回退 RF） |
+- 参数量：**1349（5.3 KB / FP32）**
+- 数据集：6 个学生画像 × 200 条/学生 = 1200 条按学生连续时序，按学生切 70/15/15
+- 训练时间：3480 条 train 样本 × 5 个 window bucket × 200 epoch ≈ 15 s on CPU (i7)
+- 单次推理：< 10 ms（实测 < 3 ms）
+
+**train / val / test 三套指标**（best val @ epoch 183）：
+
+| split | n   | MSE (归一化) | MAE (0-100 分数空间) | R²     |
+|-------|-----|--------------|-----------------------|--------|
+| train | 3480| 0.0057       | **6.02 分**           | 0.319  |
+| val   | 204 | 0.0065       | **6.82 分**           | 0.271  |
+| test  | 204 | 0.0080       | **7.68 分**           | 0.112  |
+
+**指标解读**：
+
+- **MAE ≈ 7 分（满分 100）** 是核心解释指标——5 步预测的平均绝对偏差。教学场景里学生总分常在 70-90 区间，对应相对误差 ~8-10%，足以指导「这周分数将稳定 / 上升 / 下降」的趋势判断。
+- **train loss > val loss** 反直觉但合理：dropout=0.2 在训练态打开（loss 被噪声推高），评估态关闭（更准）。曲线上 train MSE 一路在 val MSE 上方就是这个原因，**不是数据穿越或评估错误**。
+- **test R² = 0.11 偏低**有两个根因：(1) seed 数据里 `defect_type_name` 每条独立采样、`actual_width` 触底样本 10% 强制扰动，本身是**高方差时序**；(2) 模型只看 3 项历史子分数，没有焊接电流 / 温度等过程量。后者属于未来工作。
+- 选择 epoch 183 作为最佳模型：val loss 在 180-185 区间触底后回升（轻微过拟合开始），早停在此处。
+- 变长输入支持验证（同一份权重）：
+
+| 输入长度 | 5 步预测                              |
+|----------|----------------------------------------|
+| 5        | [65.5, 69.1, 63.2, 71.5, 71.8]         |
+| 8        | [76.0, 77.4, 74.1, 78.0, 78.4]         |
+| 20       | [86.7, 85.9, 85.3, 84.6, 85.1]         |
+| 30       | [88.7, 87.5, 87.4, 85.8, 86.3]         |
+| 50       | 同 L=30（自动截到 30）                  |
+| 3        | [85, ..., 85]（不足 MIN，返回中性，上游回退 RF） |
 
 预测值随输入"新近度"单调变化（短输入看早期数据，预测偏低；长输入看完整后段）。
 
-**性能/工程亮点**：CPU-only torch 2.5.1，无 GPU 依赖；80 epoch CPU 几秒训完，比同
+**性能/工程亮点**：CPU-only torch 2.5.1，无 GPU 依赖；200 epoch CPU 15 s 训完，比同
 规模 LSTM 快 3-5×（Bai 2018 实验数据）。
+
+**复现命令**：
+
+```bash
+cd backend
+python scripts/train_temporal_offline.py
+# 落盘 docs/temporal_training_curve.png + docs/temporal_metrics.json
+```
+
+该脚本与线上 `predict_with_temporal_model` 路径解耦：线上对单生 22 条数据切窗口
+样本数小，曲线噪声大；离线脚本用 `seed_demo_data` 同一套画像 + 固定 `RANDOM_SEED=7`
+为每个学生合成 200 条连续时序，按学生切 train/val/test 不跨界，跑 200 epoch 出可
+重现的指标。
 
 **创新点**：
 - 同一模型权重支持 5..30 任意输入长度，短历史学生不被 padding 拖垮
@@ -513,7 +544,7 @@ P0-P3 11 项完成后做了一轮全栈审计，发现以下「已实现但展�
 | 编号 | 弱点 | 评委可能的提问 | 修补方案 |
 |---|---|---|---|
 | **E-P3-2.v2** | AI schema 重试**完全没做**，`ai_analysis.py` 仍是一次失败直接 fallback | 「AI 拿到的 schema 长什么样？失败怎么办？」 | 解析失败时把「上次输出无法解析为 JSON，请严格按 schema」加到 user message 重试 1 次；prompt 附 `severity_map`；pydantic 校验返回字段 |
-| **E-P2-1.v2** | 1D-CNN 无训练曲线、无 R²/loss 落盘 | 「训练曲线在哪？loss 是多少？」 | `train_from_records` 训练循环记 per-epoch loss；训完保存 `docs/temporal_training_curve.png` + `docs/temporal_metrics.json` |
+| **E-P2-1.v2** ✅ | 1D-CNN 无训练曲线、无 R²/loss 落盘 | 「训练曲线在哪？loss 是多少？」 | 完成：`scripts/train_temporal_offline.py` 按学生切 train/val/test，落盘 `docs/temporal_training_curve.png` + `docs/temporal_metrics.json`；test MAE 7.68 分 / R²=0.11，详见 §7 |
 | **E-P1-2.v2** | 暗-亮-暗连续性过滤数量没暴露到 UI | 「拿一段反光带视频对比开/关」 | `_pick_best_row` 返回 `rejected_count`，透传到 `current_detection_data`，MJPEG 角标显示 |
 
 ### 🟢 绿色（顺手做）
