@@ -17,6 +17,9 @@ interface DetectionScores {
 interface GaussianSplatViewerProps {
   modelUrl: string
   detectionScores?: DetectionScores | null
+  // mini：控制中心迷你预览框用，跳过 idle/processing 直接 reveal，无工具栏/HUD/帮助，
+  // OrbitControls 禁鼠标交互只留 autoRotate
+  mini?: boolean
 }
 
 const SH_C0 = 0.28209479177387814
@@ -103,12 +106,14 @@ interface ParsedData {
 function SplatRenderer({
   modelUrl,
   reveal,
+  mini = false,
   onRevealProgress,
   onRevealComplete,
   onLoadUpdate,
 }: {
   modelUrl: string
   reveal: boolean
+  mini?: boolean
   onRevealProgress?: (ratio: number, revealed: number) => void
   onRevealComplete?: () => void
   onLoadUpdate: (state: LoadState) => void
@@ -226,7 +231,8 @@ function SplatRenderer({
     const mat = new THREE.ShaderMaterial({
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
-      uniforms: { uSize: { value: 0.08 } },
+      // mini 预览框小，默认点大些让密度看着够；全屏模式保留细颗粒
+      uniforms: { uSize: { value: mini ? 0.15 : 0.08 } },
       vertexColors: true,
       transparent: true,
       depthWrite: false,
@@ -344,25 +350,27 @@ function SplatRenderer({
   return null
 }
 
-export function GaussianSplatViewer({ modelUrl, detectionScores }: GaussianSplatViewerProps) {
-  const [viewState, setViewState] = useState<ViewState>('idle')
+export function GaussianSplatViewer({ modelUrl, detectionScores, mini = false }: GaussianSplatViewerProps) {
+  const [viewState, setViewState] = useState<ViewState>(mini ? 'revealing' : 'idle')
   const [pipelineStage, setPipelineStage] = useState(-1)
   const [pipelineDetail, setPipelineDetail] = useState('')
   const [pipelineProgress, setPipelineProgress] = useState(0)
   const [splatCount, setSplatCount] = useState(0)
   const [totalSplats, setTotalSplats] = useState(0)
-  const [reveal, setReveal] = useState(false)
-  const [autoRotate, setAutoRotate] = useState(false)
+  const [reveal, setReveal] = useState(mini)
+  const [autoRotate, setAutoRotate] = useState(mini)
   const [hud, setHud] = useState({ x: '0', y: '0', z: '0', dist: '0', size: '0.080' })
   const pipelineTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
+    // mini 模式不渲染 HUD，500ms 轮询 + setHud 重渲一律省掉
+    if (mini) return
     const interval = setInterval(() => {
       const cam = (window as any).__splatCamera
       if (cam) setHud(cam)
     }, 500)
     return () => clearInterval(interval)
-  }, [])
+  }, [mini])
 
   const handleStart = useCallback(() => {
     setViewState('processing')
@@ -433,16 +441,17 @@ export function GaussianSplatViewer({ modelUrl, detectionScores }: GaussianSplat
         <SplatRenderer
           modelUrl={modelUrl}
           reveal={reveal}
+          mini={mini}
           onRevealProgress={handleRevealProgress}
           onRevealComplete={handleRevealComplete}
           onLoadUpdate={handleLoadUpdate}
         />
         <OrbitControls
-          enablePan={true}
-          enableZoom={true}
-          enableRotate={true}
+          enablePan={!mini}
+          enableZoom={!mini}
+          enableRotate={!mini}
           autoRotate={autoRotate}
-          autoRotateSpeed={0.8}
+          autoRotateSpeed={mini ? 0.4 : 0.8}
           minDistance={0.3}
           maxDistance={80}
         />
@@ -530,7 +539,7 @@ export function GaussianSplatViewer({ modelUrl, detectionScores }: GaussianSplat
       )}
 
       {/* ── Revealing State ── */}
-      {viewState === 'revealing' && (
+      {viewState === 'revealing' && !mini && (
         <div className="absolute bottom-8 left-1/2 -translate-x-1/2 z-40">
           <div className="bg-black/75 backdrop-blur px-5 py-3 rounded-xl text-center border border-slate-700/50">
             <p className="text-white text-xs font-medium">
@@ -548,7 +557,7 @@ export function GaussianSplatViewer({ modelUrl, detectionScores }: GaussianSplat
       )}
 
       {/* ── Ready: Detection Scores ── */}
-      {viewState === 'ready' && detectionScores && (
+      {viewState === 'ready' && detectionScores && !mini && (
         <div className="absolute top-3 left-3 z-40 bg-black/70 text-white px-3 py-2 rounded-lg text-xs pointer-events-none">
           <div className="flex items-center gap-2 mb-1">
             <Camera className="w-3 h-3 text-blue-400" />
@@ -565,7 +574,7 @@ export function GaussianSplatViewer({ modelUrl, detectionScores }: GaussianSplat
       )}
 
       {/* ── Toolbar ── */}
-      {(viewState === 'revealing' || viewState === 'ready') && (
+      {(viewState === 'revealing' || viewState === 'ready') && !mini && (
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-40 flex gap-1 flex-wrap justify-center">
           <ToolBtn onClick={handleReset} title="重置视角"><Maximize className="w-3 h-3" /></ToolBtn>
           <ToolBtn onClick={handleTop} title="俯视">↑</ToolBtn>
@@ -580,7 +589,7 @@ export function GaussianSplatViewer({ modelUrl, detectionScores }: GaussianSplat
       )}
 
       {/* ── HUD ── */}
-      {viewState === 'ready' && (
+      {viewState === 'ready' && !mini && (
         <div className="absolute top-3 right-3 z-40 text-[10px] font-mono text-gray-400 pointer-events-none opacity-60">
           <div>{totalSplats.toLocaleString()} pts</div>
           <div>dist:{hud.dist} size:{hud.size}</div>
@@ -588,7 +597,7 @@ export function GaussianSplatViewer({ modelUrl, detectionScores }: GaussianSplat
       )}
 
       {/* ── Help ── */}
-      {(viewState === 'revealing' || viewState === 'ready') && (
+      {(viewState === 'revealing' || viewState === 'ready') && !mini && (
         <div className="absolute bottom-10 left-1/2 -translate-x-1/2 z-10 text-[10px] text-gray-500 pointer-events-none">
           拖拽旋转 | 滚轮缩放 | 右键平移 | R键重置
         </div>

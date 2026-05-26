@@ -6,7 +6,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Home, Settings, User, Activity, TrendingUp, Database, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut, Trophy } from "lucide-react"
+import { Home, Settings, User, Activity, TrendingUp, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut, Trophy } from "lucide-react"
 import Image from "next/image"
 import { API_ENDPOINTS } from "@/lib/api"
 import { getPredictionCacheKey, getRadarCacheKey } from "@/lib/storage"
@@ -15,6 +15,7 @@ import { LessonPlanExportContent } from "../components/lesson-plan/lesson-plan-e
 import { AITeacherChatContent } from "../components/ai-teacher/ai-teacher-chat"
 import { PredictionDashboardContent } from "../components/prediction/prediction-dashboard"
 import { YOLORealtimeDetector, initialYOLOLiveState, type YOLOLiveState } from "../components/detection/yolo-realtime-detector"
+import { GaussianSplatViewer } from "../components/detection/gaussian-splat-viewer"
 import { ParticleField } from "../components/particle-field"
 import { DataTreeContent } from "../components/data-tree/data-tree-content"
 import { StudentComparisonContent } from "../components/comparison/student-comparison"
@@ -40,11 +41,6 @@ export default function WeldingDetectionSystem() {
   // 检测态放在父级，免得切模块时 detector 卸载把状态带走
   const [yoloLive, setYoloLive] = useState<YOLOLiveState>(initialYOLOLiveState)
   const [yoloDataForTeacher, setYoloDataForTeacher] = useState<any>(null) // 存储要发送给AI教师的YOLO数据
-  const [realTimeData, setRealTimeData] = useState({
-    dataPoints: 0,
-    avgScore: 0,
-    batchCount: 0,
-  })
   const router = useRouter()
   const { currentUser, isHydrated, logout } = useAuth()
 
@@ -91,38 +87,14 @@ export default function WeldingDetectionSystem() {
     router.replace("/login")
   }
 
-  // 从后端获取真实数据
-  useEffect(() => {
-    const fetchRealData = async () => {
-      try {
-        const response = await fetch(API_ENDPOINTS.DASHBOARD_QUICK_STATS)
-        if (response.ok) {
-          const data = await response.json()
-          setRealTimeData({
-            dataPoints: data.total_detections || 0,
-            avgScore: data.avg_score || 0,
-            batchCount: data.batch_count || 0,
-          })
-        }
-      } catch (error) {
-        console.error('获取数据失败:', error)
-      }
-    }
-
-    fetchRealData()
-    // 每10秒刷新一次数据
-    const interval = setInterval(fetchRealData, 10000)
-    return () => clearInterval(interval)
-  }, [])
-
   const sidebarItems = [
     { id: "dashboard", label: "控制中心", icon: Home },
-    { id: "detection", label: "焊缝检测", icon: Eye },
-    { id: "teacher", label: "AI 教师", icon: GraduationCap },
-    { id: "prediction", label: "智能预测", icon: Brain },
     { id: "data-tree", label: "数据树", icon: GitBranch },
     { id: "comparison", label: "学生对比", icon: Trophy },
     { id: "analysis", label: "报告导出", icon: FileDown },
+    { id: "detection", label: "焊缝检测", icon: Eye },
+    { id: "teacher", label: "AI 教师", icon: GraduationCap },
+    { id: "prediction", label: "智能预测", icon: Brain },
     { id: "settings", label: "关于我们", icon: Settings },
   ]
 
@@ -176,7 +148,7 @@ export default function WeldingDetectionSystem() {
   const renderMainContent = () => {
     switch (activeModule) {
       case "dashboard":
-        return <DashboardContent realTimeData={realTimeData} setActiveModule={setActiveModule} />
+        return <DashboardContent setActiveModule={setActiveModule} />
       case "detection":
         return <DetectionContent
           setActiveModule={setActiveModule}
@@ -200,7 +172,7 @@ export default function WeldingDetectionSystem() {
       case "settings":
         return <SystemSettingsContent />
       default:
-        return <DashboardContent realTimeData={realTimeData} setActiveModule={setActiveModule} />
+        return <DashboardContent setActiveModule={setActiveModule} />
     }
   }
 
@@ -322,7 +294,7 @@ export default function WeldingDetectionSystem() {
         </header>
 
         {/* 主要内容区域 */}
-        <main className={`flex-1 ${activeModule === "data-tree" ? "" : "p-6"} overflow-auto`}>
+        <main className={`flex-1 ${activeModule === "data-tree" ? "" : "p-6"} overflow-y-auto overflow-x-hidden`}>
           {renderMainContent()}
         </main>
       </div>
@@ -331,7 +303,7 @@ export default function WeldingDetectionSystem() {
 }
 
 // 控制中心主界面
-function DashboardContent({ realTimeData, setActiveModule }: any) {
+function DashboardContent({ setActiveModule }: { setActiveModule: (m: string) => void }) {
   return (
     <div className="space-y-6">
       {/* 系统宣传卡片 */}
@@ -351,6 +323,8 @@ function DashboardContent({ realTimeData, setActiveModule }: any) {
           </div>
         </CardContent>
       </Card>
+
+      <Splat3DGSPreviewCard />
 
       {/* 三大核心功能模块 */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
@@ -418,64 +392,20 @@ function DashboardContent({ realTimeData, setActiveModule }: any) {
           </CardContent>
         </Card>
       </div>
-
-      {/* 系统状态监控 - 使用真实数据 */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card className="bg-slate-800/50 border-slate-600">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-white flex items-center text-sm">
-              <Database className="w-4 h-4 mr-2 text-purple-400" />
-              检测统计
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-2">
-              <div className="flex justify-between">
-                <span className="text-gray-400 text-xs">总检测次数</span>
-                <span className="text-green-400 text-sm font-bold">{realTimeData.dataPoints}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-400 text-xs">批次数</span>
-                <span className="text-cyan-400 text-sm font-bold">{Math.floor(realTimeData.dataPoints / 30)}</span>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-slate-800/50 border-slate-600">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-white flex items-center text-sm">
-              <TrendingUp className="w-4 h-4 mr-2 text-green-400" />
-              平均分数
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-center">
-              <div className="text-3xl font-bold text-green-400">{realTimeData.avgScore > 0 ? realTimeData.avgScore.toFixed(1) : '--'}</div>
-              <div className="text-gray-400 text-xs mt-1">最近30次检测平均分</div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="bg-slate-800/50 border-slate-600">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-white flex items-center text-sm">
-              <Activity className="w-4 h-4 mr-2 text-blue-400" />
-              系统状态
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center justify-center">
-              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse mr-2"></div>
-              <span className="text-green-400 text-sm font-medium">运行正常</span>
-            </div>
-            <div className="text-center mt-2 text-gray-400 text-xs">
-              系统已就绪
-            </div>
-          </CardContent>
-        </Card>
-      </div>
     </div>
+  )
+}
+
+// 控制中心 3DGS 迷你预览：固定高度避免 Canvas mount 时 aspect 重排让滚动条闪烁
+function Splat3DGSPreviewCard() {
+  return (
+    <Card className="bg-slate-800/50 border-slate-600 overflow-hidden">
+      <CardContent className="p-0">
+        <div className="w-full h-96">
+          <GaussianSplatViewer modelUrl={API_ENDPOINTS.MODEL_3DGS} mini />
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 

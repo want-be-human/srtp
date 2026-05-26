@@ -88,6 +88,11 @@ body {
   * {
     border-color: hsl(var(--border));
   }
+  html,
+  body {
+    /* 暂用根级 overflow-x: hidden 收敛横向滚动条闪烁，后续定位真实溢出元素再去掉 */
+    overflow-x: hidden;
+  }
   body {
     background-color: hsl(var(--background));
     color: hsl(var(--foreground));
