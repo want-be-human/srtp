@@ -25,10 +25,12 @@ sidebar 项 + 对应 case 分支，不需要动 Next.js routing。
 - 队友只新加了 1 个 commit（`1afd1d2`），除了 3DGS 没有其他超过本端进度的改动，
   不需要做功能取舍
 
-## 0.5 进度快照（最近更新 2026-05-26 P1-A 推完之后）
+## 0.5 进度快照（最近更新 2026-05-26 §5 §6 推完之后）
 
-P0 控制中心 + P1-A 检测页（§2.x）+ 两个合并必修（§9.1 §9.2）已经落地，剩 §3.x
-3DGS 渐进、§4.x 预测报告合并、§5.x §6.x §7.x 还在 backlog。
+P0 控制中心 + P1-A 检测页（§2.x）+ §3.x 3DGS 渐进 + §4.x 预测报告合并 +
+§5.x 数据树合 PK + §6.x AI 教师（基础持久化版） + 两个合并必修（§9.1 §9.2）都
+已落地。还剩 §6.1 完整多会话历史侧栏（A 方案）+ §7.x PDF 模板细节 + §9.4 硬件
+接入骨架。
 
 | 节 | 标题 | 状态 | 代码位置 |
 |---|---|---|---|
@@ -41,17 +43,18 @@ P0 控制中心 + P1-A 检测页（§2.x）+ 两个合并必修（§9.1 §9.2）
 | §2.3 | viewer 切走再回来重头加载修复 | 完成 `e33ca23` | `_splatCache` + `_viewerStateCache` + instant reveal |
 | §3.1 | 上传视频入口说明 | 完成（措辞已澄清，viewer 现状无上传 UI，后续接硬件时按 §9.4 开关切回真采集路径） | `gaussian-splat-viewer.tsx` |
 | §3.2 | 后端预生成 .ply | placeholder 已上 `bd0f9da` / `77790fd`（5000→8000 点拉亮），真焊缝模型留到硬件接通后替换 | `backend/static/3dgs/model_light.ply` |
-| §3.3 | 渐进显示 20→30→60→100% | 完成（下个 commit）— 4 段 milestone 不等长 batch，首段立刻渲染让首屏直接有 20% | `gaussian-splat-viewer.tsx` REVEAL_MILESTONES |
+| §3.3 | 渐进显示 20→30→60→100% | 完成 `e246bf8` — 4 段 milestone 不等长 batch，首段立刻渲染让首屏直接有 20% | `gaussian-splat-viewer.tsx` REVEAL_MILESTONES |
 | §3.4 | 首屏 30 秒预算 | 完成 — mini cache 命中后毫秒级 instant；detection 全屏首次 4s pipeline + 2s reveal 共 ~6s 远低于 30s 预算 | 同 §3.3 |
 | §4.1 | lesson-plan 合到 prediction module | 完成 `adb6a04` | `page.tsx` case 'prediction' 合 + sidebar 删 analysis |
 | §4.2 | 报告改单人导出 | 完成 `adb6a04` | lesson_plan.py / dashboard.py / standalone / lesson-plan-export 全链路按 student_id filter |
 | §4.3 | PDF 改静态模板查表 | 完成 `adb6a04`（现状已是规则匹配，PDF subprocess 不走 LLM） | `_get_cached_or_quick_recommendations` 按总分区间生成 15-18 条 |
 | §4.4 | AI 分析 API 配置修复 | 完成 `adb6a04` | `config.py` 加 OPENAI_BASE_URL/MODEL fallback + 前端 aiError 状态 + AIOutputBox 红 banner |
-| §5.1 | 数据树加 PK 按钮 | 完成（下个 commit）— DataTreeContent 加 'tree' \| 'pk' mode toggle，PK 视图复用 StudentComparisonContent | `data-tree-content.tsx` |
-| §5.2 | 删独立学生对比 sidebar 入口 | 完成（下个 commit） | `page.tsx` sidebar 数组 + 删 case 分支 |
-| §6.1 | AI 教师历史对话入口 | 完成（下个 commit）— 改走 localStorage 按学号分桶持久化，比后端表更轻 | `storage.ts` `TEACHER_HISTORY` + `ai-teacher-chat.tsx` 加载/清空 |
-| §6.2 | LLM 调用失败具体提示 | 完成（下个 commit） | `teacher.py` 返回 `error_category` + 前端 ERROR_HINTS 翻友好文案 |
-| §6.3 | 共享 deepseek client | 完成（下个 commit）— 新增 `backend/ai_client.py`，teacher.py 和 ai_analysis.py 走同一个实例 | `ai_client.py` |
+| §5.1 | 数据树加 PK 按钮 | 完成 `9943fc7` — DataTreeContent 加 'tree' \| 'pk' mode toggle，PK 视图复用 StudentComparisonContent | `data-tree-content.tsx` |
+| §5.2 | 删独立学生对比 sidebar 入口 | 完成 `9943fc7` | `page.tsx` sidebar 数组 + 删 case 分支 |
+| §6.1a | AI 教师对话持久化 | 完成 `9943fc7` — 单线程按学号分桶 localStorage + 清空按钮（底层） | `storage.ts` `TEACHER_HISTORY` + `ai-teacher-chat.tsx` |
+| §6.1b | AI 教师多会话历史侧栏 | 完成（下个 commit）— ChatGPT 风格左侧 session 列表，按学号分桶后再分多 session，新建/切换/单删/清空，title 自动取首问前 20 字 | `use-teacher-sessions.ts` + `session-list-sidebar.tsx` |
+| §6.2 | LLM 调用失败具体提示 | 完成 `9943fc7` | `teacher.py` 返回 `error_category` + 前端 ERROR_HINTS 翻友好文案 |
+| §6.3 | 共享 deepseek client | 完成 `9943fc7` — 新增 `backend/ai_client.py`，teacher.py 和 ai_analysis.py 走同一个实例 | `ai_client.py` |
 | §7.x | PDF 模板细节 | 待做 | `backend/services/pdf_generator/` |
 | §9.1 | `/static/3dgs/...` 404 修法 | 完成 `bd0f9da` | `backend/main.py` StaticFiles mount |
 | §9.2 | welding.db 持久化修法 | 完成 `bd0f9da` | `git rm --cached` + `.gitignore` + `.seed` + `database.py` 锚绝对路径 |
@@ -121,9 +124,14 @@ P0 控制中心 + P1-A 检测页（§2.x）+ 两个合并必修（§9.1 §9.2）
 
 - [x] 加“历史对话记录”入口，列出当前学生的过往 Q&A
   - 排查发现前端 `TEACHER_HISTORY` 常量只是个占位，后端并没有这个 endpoint。
-    考虑到学生量不大、对话量更小，且历史只对自己有意义，改成走前端
-    localStorage 按学号分桶持久化（`getTeacherHistoryKey(studentId)`）。
-    切学号时 chat 组件自动加载对应桶，清空按钮一键 reset。后端不动表。
+    考虑到学生量不大、对话量更小，且历史只对自己有意义，改成走前端 localStorage。
+  - 9943fc7（§6.1a 底层）：按学号分桶 `getTeacherHistoryKey(studentId)`，
+    单一对话线程持久化 + 清空按钮，切学号自动加载对应桶。
+  - §6.1b 完整 A 方案（下个 commit）：每个学号桶下再分多 session，每条 session
+    自带 `{id, createdAt, updatedAt, title, messages}`。新增
+    `use-teacher-sessions` hook 管 CRUD，新增 `SessionListSidebar` 组件做
+    ChatGPT 风格左侧列表（新建 / 点击切换 / 单条删除 / 二次确认清空全部）；
+    welcome 由组件运行时注入，不入库免每个 session 都存冗余。
 - [x] 确认 `chat` endpoint 真实拿到 LLM 返回
   - `teacher.py` 走 `get_shared_ai_client()` 拿同一个 OpenAI 实例。
   - 失败时按异常类型归到 `auth / timeout / rate_limit / network / not_configured /
