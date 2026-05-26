@@ -9,7 +9,8 @@ from datetime import datetime
 import logging
 
 # 使用统一配置
-from config import AI_API_KEY, AI_API_BASE_URL, AI_MODEL
+from ai_client import get_shared_ai_client
+from config import AI_API_BASE_URL, AI_API_KEY, AI_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -74,22 +75,15 @@ class AIAnalysisService:
         self.api_key = AI_API_KEY
         self.base_url = AI_API_BASE_URL
         self.model = AI_MODEL
-        self.client = None
+        # 共享 client：teacher.py 也用同一个实例，连接池和超时配置走同一份
+        self.client = get_shared_ai_client()
 
-        # 尝试初始化 OpenAI 客户端（失败不阻止应用启动）
-        if self.api_key:
-            try:
-                from openai import OpenAI
-                self.client = OpenAI(
-                    api_key=self.api_key,
-                    base_url=self.base_url
-                )
-                print(f"AI分析服务初始化完成，使用模型: {self.model}")
-            except Exception as e:
-                print(f"警告: AI客户端初始化失败 ({e})，AI功能将使用备用响应")
-                self.client = None
-        else:
+        if self.client:
+            print(f"AI分析服务初始化完成，使用模型: {self.model}")
+        elif not self.api_key:
             print("警告: 未配置API密钥，AI分析功能将使用备用响应")
+        else:
+            print("警告: AI客户端初始化失败，AI功能将使用备用响应")
 
     def _call_openai_api(
         self,

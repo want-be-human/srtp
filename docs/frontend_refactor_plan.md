@@ -47,11 +47,11 @@ P0 控制中心 + P1-A 检测页（§2.x）+ 两个合并必修（§9.1 §9.2）
 | §4.2 | 报告改单人导出 | 完成 `adb6a04` | lesson_plan.py / dashboard.py / standalone / lesson-plan-export 全链路按 student_id filter |
 | §4.3 | PDF 改静态模板查表 | 完成 `adb6a04`（现状已是规则匹配，PDF subprocess 不走 LLM） | `_get_cached_or_quick_recommendations` 按总分区间生成 15-18 条 |
 | §4.4 | AI 分析 API 配置修复 | 完成 `adb6a04` | `config.py` 加 OPENAI_BASE_URL/MODEL fallback + 前端 aiError 状态 + AIOutputBox 红 banner |
-| §5.1 | 数据树加 PK 按钮 | 待做 | `DataTreeContent` 加 mode toggle |
-| §5.2 | 删独立学生对比 sidebar 入口 | 待做 | `page.tsx` sidebar 数组 |
-| §6.1 | AI 教师历史对话入口 | 待做 | `components/ai-teacher/` |
-| §6.2 | LLM 调用失败具体提示 | 待做 | `backend/api/teacher.py` + 前端错误回显 |
-| §6.3 | 共享 deepseek client | 待做 | `backend/api/teacher.py` + `lesson_plan.py` |
+| §5.1 | 数据树加 PK 按钮 | 完成（下个 commit）— DataTreeContent 加 'tree' \| 'pk' mode toggle，PK 视图复用 StudentComparisonContent | `data-tree-content.tsx` |
+| §5.2 | 删独立学生对比 sidebar 入口 | 完成（下个 commit） | `page.tsx` sidebar 数组 + 删 case 分支 |
+| §6.1 | AI 教师历史对话入口 | 完成（下个 commit）— 改走 localStorage 按学号分桶持久化，比后端表更轻 | `storage.ts` `TEACHER_HISTORY` + `ai-teacher-chat.tsx` 加载/清空 |
+| §6.2 | LLM 调用失败具体提示 | 完成（下个 commit） | `teacher.py` 返回 `error_category` + 前端 ERROR_HINTS 翻友好文案 |
+| §6.3 | 共享 deepseek client | 完成（下个 commit）— 新增 `backend/ai_client.py`，teacher.py 和 ai_analysis.py 走同一个实例 | `ai_client.py` |
 | §7.x | PDF 模板细节 | 待做 | `backend/services/pdf_generator/` |
 | §9.1 | `/static/3dgs/...` 404 修法 | 完成 `bd0f9da` | `backend/main.py` StaticFiles mount |
 | §9.2 | welding.db 持久化修法 | 完成 `bd0f9da` | `git rm --cached` + `.gitignore` + `.seed` + `database.py` 锚绝对路径 |
@@ -119,12 +119,20 @@ P0 控制中心 + P1-A 检测页（§2.x）+ 两个合并必修（§9.1 §9.2）
 
 ## 6. AI 教师 — P2
 
-- [ ] 加“历史对话记录”入口，列出当前学生的过往 Q&A
-  - 后端已有 `TEACHER_HISTORY` endpoint，前端做对应列表 UI
-- [ ] 确认 `chat` endpoint 真实拿到 LLM 返回
-  - 失败场景检查：API key 缺 / API 超时 / response 解析失败
-  - 失败时给具体提示，不要静默 fallback 到 mock
-- [ ] 报告导出和 AI 教师共用同一 deepseek client，避免重复初始化
+- [x] 加“历史对话记录”入口，列出当前学生的过往 Q&A
+  - 排查发现前端 `TEACHER_HISTORY` 常量只是个占位，后端并没有这个 endpoint。
+    考虑到学生量不大、对话量更小，且历史只对自己有意义，改成走前端
+    localStorage 按学号分桶持久化（`getTeacherHistoryKey(studentId)`）。
+    切学号时 chat 组件自动加载对应桶，清空按钮一键 reset。后端不动表。
+- [x] 确认 `chat` endpoint 真实拿到 LLM 返回
+  - `teacher.py` 走 `get_shared_ai_client()` 拿同一个 OpenAI 实例。
+  - 失败时按异常类型归到 `auth / timeout / rate_limit / network / not_configured /
+    unknown` 几个短 key，前端 `ERROR_HINTS` 翻成不带 env 变量名的友好文案，
+    红色 banner 显示；后端 console 还能拿到 error_detail 排查。
+- [x] 报告导出和 AI 教师共用同一 deepseek client，避免重复初始化
+  - 新增 `backend/ai_client.py`，`AIAnalysisService.__init__` 改成从这里取。
+  - 同一个 client 实例 + 共用连接池 + 共用超时配置，原来两份实现配置漂移
+    过一阵子（teacher.py 限了 12s read timeout，ai_analysis.py 走 SDK 默认）。
 
 ## 7. PDF 模板细节 — P3
 

@@ -15,7 +15,6 @@ export const API_ENDPOINTS = {
 
   // AI教师
   TEACHER_CHAT: `${API_BASE_URL}/api/v1/teacher/chat`,
-  TEACHER_HISTORY: `${API_BASE_URL}/api/v1/teacher/history`,
 
   // 预测
   PREDICT: `${API_BASE_URL}/api/v1/predict`,

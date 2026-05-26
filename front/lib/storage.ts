@@ -11,6 +11,7 @@ export const StorageKey = {
   PREDICTION_CACHE: `${NS}prediction_cache`,
   RADAR_CACHE: `${NS}radar_cache`,
   LESSON_PLAN_CACHE: `${NS}lesson_plan_cache`,
+  TEACHER_HISTORY: `${NS}teacher_history`,
 } as const
 
 /** 按学生分桶的预测缓存 key，没有学生时落到 guest 槽 */
@@ -26,6 +27,11 @@ export function getRadarCacheKey(studentId?: string | null): string {
 /** 报告导出页的批次数据缓存 key，单人单桶 */
 export function getLessonPlanCacheKey(studentId?: string | null): string {
   return `${StorageKey.LESSON_PLAN_CACHE}:${studentId || "guest"}`
+}
+
+/** AI 教师对话历史 key，按学生分桶；切学生时 chat 组件会自动加载对应桶 */
+export function getTeacherHistoryKey(studentId?: string | null): string {
+  return `${StorageKey.TEACHER_HISTORY}:${studentId || "guest"}`
 }
 
 export function getJSON<T>(key: string, fallback: T): T {

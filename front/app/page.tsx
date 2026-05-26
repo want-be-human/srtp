@@ -6,7 +6,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Home, Settings, User, Activity, TrendingUp, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut, Trophy, Box } from "lucide-react"
+import { Home, Settings, User, Activity, TrendingUp, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut, Box } from "lucide-react"
 import Image from "next/image"
 import { API_ENDPOINTS } from "@/lib/api"
 import { getPredictionCacheKey, getRadarCacheKey } from "@/lib/storage"
@@ -18,7 +18,6 @@ import { YOLORealtimeDetector, initialYOLOLiveState, type YOLOLiveState } from "
 import { GaussianSplatViewer } from "../components/detection/gaussian-splat-viewer"
 import { ParticleField } from "../components/particle-field"
 import { DataTreeContent } from "../components/data-tree/data-tree-content"
-import { StudentComparisonContent } from "../components/comparison/student-comparison"
 import { CameraCalibrationCard } from "../components/settings/camera-calibration"
 
 // 定义检测结果的类型接口
@@ -90,7 +89,6 @@ export default function WeldingDetectionSystem() {
   const sidebarItems = [
     { id: "dashboard", label: "控制中心", icon: Home },
     { id: "data-tree", label: "数据树", icon: GitBranch },
-    { id: "comparison", label: "学生对比", icon: Trophy },
     { id: "detection", label: "WeldNet 智能检测", icon: Eye },
     { id: "teacher", label: "AI 教师", icon: GraduationCap },
     { id: "prediction", label: "智能预测", icon: Brain },
@@ -169,8 +167,6 @@ export default function WeldingDetectionSystem() {
         )
       case "data-tree":
         return <DataTreeContent />
-      case "comparison":
-        return <StudentComparisonContent />
       case "settings":
         return <SystemSettingsContent />
       default:
