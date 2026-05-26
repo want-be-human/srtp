@@ -91,7 +91,6 @@ export default function WeldingDetectionSystem() {
     { id: "dashboard", label: "控制中心", icon: Home },
     { id: "data-tree", label: "数据树", icon: GitBranch },
     { id: "comparison", label: "学生对比", icon: Trophy },
-    { id: "analysis", label: "报告导出", icon: FileDown },
     { id: "detection", label: "WeldNet 智能检测", icon: Eye },
     { id: "teacher", label: "AI 教师", icon: GraduationCap },
     { id: "prediction", label: "智能预测", icon: Brain },
@@ -162,13 +161,16 @@ export default function WeldingDetectionSystem() {
       case "teacher":
         return <AITeacherChatContent lastDetectionResult={yoloDataForTeacher || detectionResults} />
       case "prediction":
-        return <PredictionDashboardContent />
+        return (
+          <div className="space-y-6">
+            <PredictionDashboardContent />
+            <LessonPlanExportContent />
+          </div>
+        )
       case "data-tree":
         return <DataTreeContent />
       case "comparison":
         return <StudentComparisonContent />
-      case "analysis":
-        return <LessonPlanExportContent />
       case "settings":
         return <SystemSettingsContent />
       default:

@@ -638,11 +638,17 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
     """从API获取批次数据"""
     import requests
 
+    # generate-pdf 启 subprocess 时把 student_id 塞 env 里，让 /lesson-plan 走单人
+    # filter；不带就是老的全班聚合
+    student_id = os.environ.get("PDF_STUDENT_ID")
+    params = {"student_id": student_id} if student_id else None
+
     try:
         print(">> 从API获取批次数据...")
+        if student_id:
+            print(f"   单人模式: student_id={student_id}")
 
-        # 获取报告数据
-        response = requests.get('http://127.0.0.1:8000/api/v1/lesson-plan', timeout=10)
+        response = requests.get('http://127.0.0.1:8000/api/v1/lesson-plan', params=params, timeout=10)
         if response.status_code != 200:
             raise Exception(f"API返回错误: {response.status_code}")
 
@@ -650,10 +656,14 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
         total_detections = api_data.get('total_detections', 0)
         print(f"   报告数据: {total_detections} 条记录")
 
-        # 获取详细检测数据 - 使用正确的端点
+        # 历史详情同样按学生过滤一下，否则单人 PDF 里会混进别人记录
         detail_records = []
         try:
-            detail_response = requests.get('http://127.0.0.1:8000/api/v1/dashboard/history', timeout=10)
+            detail_response = requests.get(
+                'http://127.0.0.1:8000/api/v1/dashboard/history',
+                params=params,
+                timeout=10,
+            )
             if detail_response.status_code == 200:
                 history_data = detail_response.json()
                 # dashboard/history 返回的是列表，不是 {history: [...]}

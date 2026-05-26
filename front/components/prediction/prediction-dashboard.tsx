@@ -195,10 +195,16 @@ function SkillRadar({ radarData }: { radarData: RadarData | null }) {
   )
 }
 
-function AIOutputBox({ aiAnalysis }: { aiAnalysis?: any }) {
+function AIOutputBox({ aiAnalysis, aiError }: { aiAnalysis?: any; aiError?: string | null }) {
   return (
     <div className="bg-slate-800 border border-slate-600 rounded-lg p-4 h-full">
       <h3 className="text-lg font-semibold text-white mb-4">AI 分析结果</h3>
+      {aiError && (
+        <div className="mb-3 p-3 bg-red-900/30 border border-red-700/40 rounded-lg">
+          <p className="text-sm text-red-300">{aiError}</p>
+          <p className="text-xs text-gray-400 mt-1">下方继续显示通用建议作为兜底</p>
+        </div>
+      )}
       <div className="space-y-3 text-gray-300">
         {aiAnalysis?.ai_analysis ? (
           <>
@@ -257,6 +263,7 @@ export function PredictionDashboardContent() {
   const [error, setError] = useState<string | null>(null)
   const [aiAnalysis, setAiAnalysis] = useState<any>(null)
   const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
   const [predictMode, setPredictMode] = useState<"fast" | "deep">("fast")
 
   // endpoint 和 localStorage 缓存都按学号分槽，免得切账号串味
@@ -309,11 +316,26 @@ export function PredictionDashboardContent() {
         setTimeout(() => {
           fetch(`${API_ENDPOINTS.PREDICT_AI_ANALYSIS}${studentQuery}`)
             .then(async (r) => {
-              if (!r.ok) return
+              if (!r.ok) {
+                // 学生看到的提示要中性，详细的让 console 留给开发者
+                if (r.status === 401 || r.status === 403) {
+                  setAiError("AI 服务认证失败，请联系老师或管理员")
+                } else if (r.status === 408 || r.status === 504) {
+                  setAiError("AI 接口超时，下一次刷新会自动重试")
+                } else if (r.status >= 500) {
+                  setAiError("AI 服务暂时不可用，稍后再试")
+                } else {
+                  setAiError(`AI 接口异常（HTTP ${r.status}）`)
+                }
+                console.warn(`AI 分析失败: HTTP ${r.status} ${r.statusText}`)
+                return
+              }
+              setAiError(null)
               setAiAnalysis(await r.json())
             })
             .catch((e) => {
-              console.warn("获取AI分析失败（不影响主功能）:", e)
+              const msg = e instanceof Error ? e.message : String(e)
+              setAiError(`连不上 AI 服务：${msg}`)
             })
             .finally(() => setAiLoading(false))
           fetch(`${API_ENDPOINTS.PREDICT_AI_RADAR}${studentQuery}`)
@@ -434,7 +456,7 @@ export function PredictionDashboardContent() {
 
         <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700 backdrop-blur-sm">
           <CardContent className="p-6">
-            <AIOutputBox aiAnalysis={aiAnalysis} />
+            <AIOutputBox aiAnalysis={aiAnalysis} aiError={aiError} />
           </CardContent>
         </Card>
       </div>

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Body
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
@@ -96,34 +96,33 @@ class AILessonAnalysisResponse(BaseModel):
     data_source: str
 
 @router.get("/lesson-plan", response_model=LessonPlanData)
-async def get_lesson_plan_data(db: Session = Depends(get_db)):
-    """
-    获取报告生成所需的综合数据
-
-    批次逻辑：
-    - 总数 ≤ 30条：全部计算
-    - 总数 > 30条：只取最近30条数据生成报告
-    - 批次划分：第1-30条为第1批次，第31-60条为第2批次，以此类推
-    """
+async def get_lesson_plan_data(
+    student_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """报告数据，传 student_id 就只算这个学生最近 30 次检测，不传退化成全班聚合。"""
     try:
-        # 获取基础统计数据
-        total_detections = db.query(models.WeldingRecord).count()
+        base_q = db.query(models.WeldingRecord)
+        if student_id:
+            base_q = base_q.filter(models.WeldingRecord.student_id == student_id)
+
+        total_detections = base_q.count()
 
         if total_detections == 0:
-            # 如果没有数据，返回示例数据
             return _generate_sample_lesson_data()
 
-        # 计算平均分数（基于全部数据）
-        avg_result = db.query(func.avg(models.WeldingRecord.total_score)).scalar()
+        avg_result = base_q.with_entities(func.avg(models.WeldingRecord.total_score)).scalar()
         average_score = float(avg_result) if avg_result else 0
 
-        # 业务逻辑：每次检测 = 一个学生
-        # 学生总数 = 检测总数
-        total_students = total_detections
+        # filter 到具体学生时，「学生数」语义就是 1；全班聚合保留原 hack
+        # （每条检测算一个学生，UI 拿来当批次规模指标）
+        if student_id:
+            total_students = 1
+        else:
+            total_students = total_detections
 
-        # ========== 批次逻辑：取最近30条数据 ==========
         BATCH_SIZE = 30
-        recent_records = db.query(models.WeldingRecord).order_by(
+        recent_records = base_q.order_by(
             desc(models.WeldingRecord.timestamp)
         ).limit(BATCH_SIZE).all()
 
@@ -147,7 +146,7 @@ async def get_lesson_plan_data(db: Session = Depends(get_db)):
         weekly_performance = _analyze_weekly_performance(recent_records)
 
         # 生成教学建议（使用缓存或快速生成，避免AI调用阻塞）
-        teaching_recommendations = _get_cached_or_quick_recommendations(skill_analysis, common_defects, average_score)
+        teaching_recommendations = _get_cached_or_quick_recommendations(skill_analysis, common_defects, average_score, student_id)
         focus_areas = _generate_focus_areas(skill_analysis)
         next_lesson_plan = _generate_next_lesson_plan(skill_analysis, common_defects)
 
@@ -376,7 +375,7 @@ _SAFETY_GENERAL_RECOMMENDATIONS = [
     "焊接完成后检查现场，确认无火源遗留方可离开"
 ]
 
-def _get_cached_or_quick_recommendations(skill_analysis: Dict[str, float], defects: List[Dict[str, Any]], avg_score: float) -> List[str]:
+def _get_cached_or_quick_recommendations(skill_analysis: Dict[str, float], defects: List[Dict[str, Any]], avg_score: float, student_id: Optional[str] = None) -> List[str]:
     """
     基于规则的智能建议生成系统
     根据批次数据（人数、平均分、技能分析、缺陷情况）动态生成个性化建议
@@ -386,8 +385,9 @@ def _get_cached_or_quick_recommendations(skill_analysis: Dict[str, float], defec
     import random
     current_time = time.time()
 
-    # 生成建议的哈希键（基于数据特征，数据变化时重新生成）
-    data_key = f"{avg_score:.0f}_{skill_analysis.get('光滑度', 0):.0f}_{skill_analysis.get('间距', 0):.0f}_{len(defects)}"
+    # data_key 一定要带 student_id，不然两个学生分数撞车就会拿到对方建议（cache 只存一份）
+    sid_part = student_id or "_all_"
+    data_key = f"{sid_part}_{avg_score:.0f}_{skill_analysis.get('光滑度', 0):.0f}_{skill_analysis.get('间距', 0):.0f}_{len(defects)}"
 
     # 检查缓存是否有效且数据未变化
     if (_recommendations_cache["data"] and
@@ -520,7 +520,7 @@ def _get_cached_or_quick_recommendations(skill_analysis: Dict[str, float], defec
         final_recs.append(safety_recs[safety_idx])
         safety_idx += 1
 
-    # 确保至少15条建议
+    # 不够 15 条就用安全类通用建议补到 15
     if len(final_recs) < 15:
         # 添加更多安全类建议
         remaining_safety = [r for r in _SAFETY_GENERAL_RECOMMENDATIONS if r not in final_recs]
@@ -698,7 +698,7 @@ def _generate_next_lesson_plan(skill_analysis: Dict[str, float], defects: List[D
     # 如果有真实技能数据，基于最弱技能生成
     if skill_analysis and any(v > 0 for v in skill_analysis.values()):
         weak_skill = min(skill_analysis.items(), key=lambda x: x[1])
-        if weak_skill[1] > 0:  # 确保有真实数据
+        if weak_skill[1] > 0:  # 只在有真分数时按弱项生成
             return {
                 "主题": f"{weak_skill[0]}技能强化训练",
                 "目标": f"提升学生{weak_skill[0]}技能至90分以上",
@@ -890,17 +890,13 @@ async def get_ai_analysis_status():
 
 
 @router.get("/lesson-plan/pdf-data")
-async def get_lesson_plan_pdf_data(db: Session = Depends(get_db)):
-    """
-    获取PDF生成所需的真实报告数据
-    供独立PDF生成器调用
-
-    Returns:
-        完整的真实报告数据，用于PDF生成
-    """
+async def get_lesson_plan_pdf_data(
+    student_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """给 standalone PDF 生成器拉数据用，参数透传到 /lesson-plan。"""
     try:
-        # 获取报告数据
-        lesson_data_response = await get_lesson_plan_data(db)
+        lesson_data_response = await get_lesson_plan_data(student_id=student_id, db=db)
         lesson_data = lesson_data_response.__dict__
 
         # 转换为PDF生成器需要的格式
@@ -934,41 +930,41 @@ async def get_lesson_plan_pdf_data(db: Session = Depends(get_db)):
         }
 
 
+class PDFGenerateRequest(BaseModel):
+    student_id: Optional[str] = None
+
+
 @router.post("/lesson-plan/generate-pdf")
-async def generate_lesson_plan_pdf(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
-    """
-    异步生成报告PDF文件
-    立即返回任务ID，前端可轮询查询进度
-
-    Returns:
-        dict: 包含任务ID的响应
-    """
-    # 生成唯一任务ID
+async def generate_lesson_plan_pdf(
+    background_tasks: BackgroundTasks,
+    request: Optional[PDFGenerateRequest] = Body(None),
+    db: Session = Depends(get_db),
+):
+    """启 PDF 生成任务，返回 task_id 给前端轮询。带 student_id 就生成单人报告。"""
+    student_id = request.student_id if request else None
     task_id = str(uuid.uuid4())[:8]
-
-    # 初始化任务状态
     _pdf_generation_tasks[task_id] = {
         "status": "pending",
         "progress": 0,
         "message": "任务已创建，等待开始...",
         "created_at": datetime.now().isoformat(),
         "file_path": None,
-        "error": None
+        "error": None,
+        "student_id": student_id,
     }
 
-    # 添加后台任务
-    background_tasks.add_task(_generate_pdf_task, task_id)
+    background_tasks.add_task(_generate_pdf_task, task_id, student_id)
 
     return {
         "status": "started",
         "task_id": task_id,
         "message": "PDF生成任务已启动，请轮询查询进度",
-        "poll_url": f"/api/v1/lesson-plan/pdf-status/{task_id}"
+        "poll_url": f"/api/v1/lesson-plan/pdf-status/{task_id}",
     }
 
 
-def _generate_pdf_task(task_id: str):
-    """后台任务：实际执行PDF生成"""
+def _generate_pdf_task(task_id: str, student_id: Optional[str] = None):
+    """后台跑 PDF 生成，student_id 通过 env 传给 subprocess 让它自己拼 query。"""
     import glob as glob_module
 
     try:
@@ -976,7 +972,6 @@ def _generate_pdf_task(task_id: str):
         _pdf_generation_tasks[task_id]["message"] = "正在准备数据..."
         _pdf_generation_tasks[task_id]["progress"] = 10
 
-        # 获取项目根目录
         current_dir = os.path.dirname(os.path.abspath(__file__))
         backend_dir = os.path.dirname(current_dir)
         pdf_generator_dir = os.path.join(backend_dir, "services", "pdf_generator")
@@ -988,13 +983,17 @@ def _generate_pdf_task(task_id: str):
         _pdf_generation_tasks[task_id]["message"] = "正在生成图表和报告..."
         _pdf_generation_tasks[task_id]["progress"] = 30
 
-        # 运行PDF生成器（超时设置为2分钟）
+        env = os.environ.copy()
+        if student_id:
+            env["PDF_STUDENT_ID"] = student_id
+
         result = subprocess.run(
             [sys.executable, pdf_generator_script],
             cwd=pdf_generator_dir,
+            env=env,
             capture_output=True,
             text=True,
-            timeout=120  # 降低到2分钟
+            timeout=120,
         )
 
         if result.returncode != 0:

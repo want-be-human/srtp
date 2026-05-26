@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 from database import SessionLocal
 import models
@@ -33,12 +33,15 @@ def get_db():
         db.close()
 
 @router.get("/dashboard/history", response_model=List[WeldingRecordOut])
-async def get_welding_history(db: Session = Depends(get_db)):
-    """
-    从数据库获取所有的焊接记录
-    """
-    records = db.query(models.WeldingRecord).order_by(models.WeldingRecord.timestamp.desc()).all()
-    return records
+async def get_welding_history(
+    student_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """焊接记录历史，可选 student_id 过滤；单人 PDF 报告也走这个接口拉详情。"""
+    q = db.query(models.WeldingRecord)
+    if student_id:
+        q = q.filter(models.WeldingRecord.student_id == student_id)
+    return q.order_by(models.WeldingRecord.timestamp.desc()).all()
 
 
 # ========== 系统状态监控API ==========

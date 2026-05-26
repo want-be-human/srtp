@@ -10,6 +10,7 @@ export const StorageKey = {
   DATA_TREE: `${NS}data_tree`,
   PREDICTION_CACHE: `${NS}prediction_cache`,
   RADAR_CACHE: `${NS}radar_cache`,
+  LESSON_PLAN_CACHE: `${NS}lesson_plan_cache`,
 } as const
 
 /** 按学生分桶的预测缓存 key，没有学生时落到 guest 槽 */
@@ -20,6 +21,11 @@ export function getPredictionCacheKey(studentId?: string | null): string {
 /** 雷达数据缓存 key，给智能预测页和登录后顶层 prefetch 共用 */
 export function getRadarCacheKey(studentId?: string | null): string {
   return `${StorageKey.RADAR_CACHE}:${studentId || "guest"}`
+}
+
+/** 报告导出页的批次数据缓存 key，单人单桶 */
+export function getLessonPlanCacheKey(studentId?: string | null): string {
+  return `${StorageKey.LESSON_PLAN_CACHE}:${studentId || "guest"}`
 }
 
 export function getJSON<T>(key: string, fallback: T): T {

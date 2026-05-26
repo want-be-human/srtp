@@ -23,11 +23,22 @@ PROJECT_ROOT = BACKEND_DIR.parent
 # ============================================
 # AI API 配置 (统一使用 DeepSeek / OpenAI 兼容格式)
 # ============================================
-# 支持两种环境变量命名方式，优先使用 DEEPSEEK_API_KEY
-AI_API_KEY = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY", "")
-# base_url 不需要 /v1 后缀，OpenAI SDK 会自动添加
-AI_API_BASE_URL = os.environ.get("AI_API_BASE_URL", "https://api.deepseek.com")
-AI_MODEL = os.environ.get("AI_MODEL", "deepseek-chat")
+# key / base_url / model 都接受 AI_* 和 OPENAI_* 两套命名，谁有用谁，仨默认值都
+# 兜底成 DeepSeek（OpenAI SDK 兼容协议，base_url 不带 /v1）
+AI_API_KEY = (
+    os.environ.get("DEEPSEEK_API_KEY")
+    or os.environ.get("OPENAI_API_KEY", "")
+)
+AI_API_BASE_URL = (
+    os.environ.get("AI_API_BASE_URL")
+    or os.environ.get("OPENAI_BASE_URL")
+    or "https://api.deepseek.com"
+)
+AI_MODEL = (
+    os.environ.get("AI_MODEL")
+    or os.environ.get("OPENAI_MODEL")
+    or "deepseek-chat"
+)
 
 # ============================================
 # 服务器配置

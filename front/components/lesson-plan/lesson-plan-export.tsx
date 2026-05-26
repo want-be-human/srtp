@@ -7,6 +7,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Users, Target, TrendingUp, FileText, Download, Loader2, RefreshCw } from "lucide-react"
 import { API_ENDPOINTS } from "@/lib/api"
+import { getLessonPlanCacheKey } from "@/lib/storage"
+import { useAuth } from "@/contexts/AuthContext"
 
 // 进度条组件
 function ProgressBar({ progress, status }: { progress: number; status: string }) {
@@ -169,6 +171,10 @@ interface LessonPlanData {
 }
 
 export function LessonPlanExportContent() {
+  const { currentUser } = useAuth()
+  const studentId = currentUser?.student_id ?? null
+  const cacheKey = getLessonPlanCacheKey(studentId)
+
   const [lessonData, setLessonData] = useState<LessonPlanData | null>(null)
   const [loading, setLoading] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
@@ -176,34 +182,32 @@ export function LessonPlanExportContent() {
   const [exportStatus, setExportStatus] = useState("")
   const [isRefreshing, setIsRefreshing] = useState(false)
 
-  // 获取报告数据 - 先显示缓存数据，后台刷新最新数据
   const fetchLessonData = async (showRefreshing = false) => {
-    if (showRefreshing) {
-      setIsRefreshing(true)
-    }
+    if (showRefreshing) setIsRefreshing(true)
 
-    // 先尝试从本地缓存读取，立即显示（提升用户体验）
-    const cachedData = localStorage.getItem('lesson_plan_cache')
-    if (cachedData && !showRefreshing) {
+    // 先把缓存挂上让 UI 立刻有内容，再背后拉新数据替换
+    const cached = localStorage.getItem(cacheKey)
+    if (cached && !showRefreshing) {
       try {
-        setLessonData(JSON.parse(cachedData))
+        setLessonData(JSON.parse(cached))
         setLoading(false)
-      } catch (e) {
-        console.warn('报告缓存数据解析失败')
+      } catch {
+        // 缓存损坏当没有
       }
     } else {
       setLoading(true)
     }
 
-    // 无论是否有缓存，都在后台获取最新数据
     try {
-      const response = await fetch(API_ENDPOINTS.LESSON_PLAN)
+      const url = studentId
+        ? `${API_ENDPOINTS.LESSON_PLAN}?student_id=${encodeURIComponent(studentId)}`
+        : API_ENDPOINTS.LESSON_PLAN
+      const response = await fetch(url)
       if (response.ok) {
         const data = await response.json()
         setLessonData(data)
-        // 保存到本地缓存
-        localStorage.setItem('lesson_plan_cache', JSON.stringify(data))
-        localStorage.setItem('lesson_plan_cache_time', Date.now().toString())
+        localStorage.setItem(cacheKey, JSON.stringify(data))
+        localStorage.setItem(`${cacheKey}:time`, Date.now().toString())
       } else {
         console.error("获取报告数据失败:", response.statusText)
       }
@@ -215,17 +219,10 @@ export function LessonPlanExportContent() {
     }
   }
 
-  // 组件加载时获取数据
   useEffect(() => {
     fetchLessonData()
-
-    // 每5秒自动刷新数据（保持数据实时性）
-    const refreshInterval = setInterval(() => {
-      fetchLessonData(false) // 后台静默刷新
-    }, 5000)
-
-    return () => clearInterval(refreshInterval)
-  }, [])
+    // 单人报告不用 5s 轮询，进页面拉一次就行；想看新数据点刷新按钮
+  }, [studentId])
 
   // 生成报告PDF - 异步方式（启动任务 -> 轮询状态 -> 下载）
   const generateEnhancedPDF = async () => {
@@ -239,10 +236,11 @@ export function LessonPlanExportContent() {
       setExportProgress(0)
       setExportStatus("正在启动生成任务...")
 
-      // 1. 启动PDF生成任务
+      // 1. 启动PDF生成任务，把当前学生 id 带过去让后端只导这一个人的数据
       const startResponse = await fetch(API_ENDPOINTS.LESSON_PLAN_PDF, {
         method: "POST",
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ student_id: studentId }),
       })
 
       if (!startResponse.ok) {
@@ -325,11 +323,15 @@ export function LessonPlanExportContent() {
   }
 
   return (
-    <div className="h-full p-6 space-y-6 bg-gradient-to-br from-slate-900 via-blue-900 to-slate-800">
-      {/* 页面标题 */}
-      <div className="text-center">
-        <h2 className="text-4xl font-bold text-white mb-4">数据可视化报告生成中心</h2>
-        <p className="text-gray-400 text-lg">自动生成数据可视化报告</p>
+    <div className="space-y-6">
+      <div className="flex justify-between items-end">
+        <div>
+          <h3 className="text-white text-xl font-bold flex items-center">
+            <FileText className="w-6 h-6 mr-2 text-orange-400" />
+            报告导出
+          </h3>
+          <p className="text-gray-400 text-sm mt-1">基于当前学生数据生成可视化 PDF 报告</p>
+        </div>
       </div>
 
       {/* 操作按钮区域 - 只保留核心功能 */}
