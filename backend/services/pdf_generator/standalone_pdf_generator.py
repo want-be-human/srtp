@@ -75,6 +75,11 @@ class BatchAnalysisData:
     # 各技能维度按检测序号的曲线，画在总分曲线下面看哪一项在拖后腿
     skill_dim_trends: Dict[str, List[float]] = field(default_factory=dict)
 
+    # 六维技能雷达，跟前端 /predict/ai-radar-data 同一套：光滑度均值、宽度准度、
+    # 缺陷控制、宽度稳定性、进步速率、缺陷集中度。比 skill_analysis 那 3 维更全面，
+    # 没拉到时雷达图退化到 3 维
+    skill_radar_6d: Optional[Dict[str, float]] = None
+
 
 # ============================================
 # PDF模板配置
@@ -499,18 +504,18 @@ class DataAnalysisPDFGenerator:
         # ========== 三、技能分析 ==========
         story.append(Paragraph("三、技能分析", styles['heading']))
 
-        if data.skill_analysis:
-            # 雷达图
+        # 雷达图和技能表优先用六维（跟前端智能预测页对齐），没拉到退化三维
+        radar_source = data.skill_radar_6d or data.skill_analysis
+        if radar_source:
             try:
-                radar_buffer = ChartGenerator.create_skill_radar_chart(data.skill_analysis)
+                radar_buffer = ChartGenerator.create_skill_radar_chart(radar_source)
                 if radar_buffer:
                     story.append(Image(radar_buffer, width=12*cm, height=12*cm))
             except Exception as e:
                 print(f"[WARN] 雷达图生成失败: {e}")
 
-            # 技能详情表格
             skill_data = [['技能项', '平均分', '等级']]
-            for skill, score in data.skill_analysis.items():
+            for skill, score in radar_source.items():
                 level = '优秀' if score >= 90 else '良好' if score >= 80 else '合格' if score >= 70 else '需改进'
                 skill_data.append([skill, f'{score:.1f}', level])
 
@@ -809,6 +814,20 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
                 'defect_type': r.get('defect_type_name', r.get('defect_type', '未知'))
             })
 
+        # 顺路拉一次六维技能雷达，跟前端智能预测页一致；拉不到就让雷达图退化到
+        # 三维（skill_analysis），不影响主流程
+        skill_radar_6d = None
+        try:
+            radar_resp = requests.get(
+                'http://127.0.0.1:8000/api/v1/predict/ai-radar-data',
+                params=params,
+                timeout=10,
+            )
+            if radar_resp.status_code == 200:
+                skill_radar_6d = radar_resp.json().get('skill_radar')
+        except Exception as e:
+            print(f"   六维雷达拉取失败（退化到三维）: {e}")
+
         return BatchAnalysisData(
             batch_number=batch_number,
             batch_size=batch_size,
@@ -827,6 +846,7 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
             student_name=os.environ.get("PDF_STUDENT_NAME"),
             student_id=student_id,
             skill_dim_trends=skill_dim_trends,
+            skill_radar_6d=skill_radar_6d,
         )
 
     except Exception as e:
@@ -872,9 +892,15 @@ def main():
     print(f"   平均分: {data.average_score:.1f}")
     print(f"   缺陷率: {data.defect_rate:.1f}%")
 
-    # 文件名带学号避免不同学生连导互相覆盖；全班报告时退化成无学号
-    sid_part = f"{data.student_id}_" if data.student_id else ""
-    filename = f"焊接质量分析报告_{sid_part}{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    # 文件名格式：姓名-学号-时间-焊接质量分析报告.pdf，缺哪段就跳过哪段
+    parts = []
+    if data.student_name:
+        parts.append(data.student_name)
+    if data.student_id:
+        parts.append(data.student_id)
+    parts.append(datetime.now().strftime('%Y%m%d_%H%M%S'))
+    parts.append("焊接质量分析报告")
+    filename = "-".join(parts) + ".pdf"
 
     generator = DataAnalysisPDFGenerator()
     generator.generate_pdf(data, filename)

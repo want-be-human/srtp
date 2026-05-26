@@ -1005,8 +1005,8 @@ def _generate_pdf_task(task_id: str, student_id: Optional[str] = None):
         _pdf_generation_tasks[task_id]["progress"] = 90
         _pdf_generation_tasks[task_id]["message"] = "正在完成..."
 
-        # 查找最新生成的PDF文件
-        pdf_files = glob_module.glob(os.path.join(pdf_generator_dir, "焊接质量分析报告_*.pdf"))
+        # 文件名格式变成 姓名-学号-时间-焊接质量分析报告.pdf，新旧两种 glob 都吃
+        pdf_files = glob_module.glob(os.path.join(pdf_generator_dir, "*焊接质量分析报告*.pdf"))
         if not pdf_files:
             raise Exception("PDF文件生成成功但未找到输出文件")
 
