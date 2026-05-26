@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Body
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 import subprocess
