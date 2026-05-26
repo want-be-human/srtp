@@ -4,6 +4,15 @@
 >
 > 目标：5 月 30 日前出可演示版本，先把样式和交互搭起来，后端逻辑次要项之后补。
 
+## 前置：前端路由架构说明
+
+`front/app/` 下只有 `login/` 和 `page.tsx` 两个真实路由。所有所谓的"模块"
+（焊缝检测 / 智能预测 / 数据树 / 学生对比 / 智能问答 / 报告导出）都不是独立 Next.js
+路由，而是 `app/page.tsx::activeModule` state 在多个 React 组件之间切换。所以下文里
+"`lesson-plan` 路由"、"`prediction` 路由"等表述实际上指的是 `activeModule` 的某个值，
+对应 `front/components/{module}/...` 下的组件。删某个"模块入口"=删 `page.tsx` 里的
+sidebar 项 + 对应 case 分支，不需要动 Next.js routing。
+
 ## 0. 合并 3DGS 后的现状盘点
 
 - 已并入：`3dgs/`（gaussian-splatting 上游 + 数据 + 训练脚本，1700+ 文件）、
@@ -15,6 +24,39 @@
   并叠加队友的 `viewMode` toggle（“实时检测 / 3D 重构视图”）
 - 队友只新加了 1 个 commit（`1afd1d2`），除了 3DGS 没有其他超过本端进度的改动，
   不需要做功能取舍
+
+## 0.5 当前 status 一览（截至 2026-05-26 晚）
+
+下面整张表是开工状态快照。所有 §1-7 重构主任务和 §9 修复项都是"明天动手"。
+单独标了"决策已定"的只代表方案确定，代码未改。
+
+| 节 | 标题 | 状态 | 触动的代码位置（明天动） |
+|---|---|---|---|
+| §1.1 | 删 3 张统计卡 | 待做 | `front/app/page.tsx` 或 `components/dashboard/*` |
+| §1.2 | 三入口下移 | 待做 | `front/app/page.tsx` sidebar 顺序 |
+| §1.3 | mini 3DGS 预览框 | 待做 | 新增 `GaussianSplatViewer mini` 模式 |
+| §1.4 | 横向滚动条闪烁 | 待做 | `front/app/layout.tsx` / `globals.css` |
+| §2.1 | 检测页标题改名 WeldNet | 待做 | `yolo-realtime-detector.tsx` CardTitle |
+| §2.2 | 3DGS 改纵向并列去 toggle | 待做 | `yolo-realtime-detector.tsx` viewMode 分支 |
+| §2.3 | viewer 切走再回来重头加载修复 | 待做 | 把 viewer 实例提到父级保活 |
+| §3.1 | 上传视频入口说明 | 待做（措辞已澄清） | `gaussian-splat-viewer.tsx` 当前无上传 UI |
+| §3.2 | 后端预生成 .ply | 待做 | `backend/static/3dgs/model_light.ply` 不存在 |
+| §3.3 | 渐进显示 20→30→60→100% | 待做 | `gaussian-splat-viewer.tsx` REVEAL 批次逻辑 |
+| §3.4 | 首屏 30 秒预算 | 待做 | 同 §3.3 |
+| §4.1 | lesson-plan 合到 prediction module | 待做 | `page.tsx::activeModule` 合 case |
+| §4.2 | 报告改单人导出 | 待做 | `backend/api/lesson_plan.py` 加 `student_id` 参数 |
+| §4.3 | PDF 改静态模板查表 | 待做 | `backend/services/pdf_generator/` |
+| §4.4 | AI 分析 API 配置修复 | 待做 | `backend/api/teacher.py` + `.env` |
+| §5.1 | 数据树加 PK 按钮 | 待做 | `DataTreeContent` 加 mode toggle |
+| §5.2 | 删独立学生对比 sidebar 入口 | 待做 | `page.tsx` sidebar 数组 |
+| §6.1 | AI 教师历史对话入口 | 待做 | `components/ai-teacher/` |
+| §6.2 | LLM 调用失败具体提示 | 待做 | `backend/api/teacher.py` + 前端错误回显 |
+| §6.3 | 共享 deepseek client | 待做 | `backend/api/teacher.py` + `lesson_plan.py` |
+| §7.x | PDF 模板细节 | 待做 | `backend/services/pdf_generator/` |
+| §9.1 | `/static/3dgs/...` 404 修法 | 待做 | `backend/main.py` 加 `StaticFiles` |
+| §9.2 | welding.db 持久化修法 | 待做 | `git rm --cached` + `.gitignore` + `.seed` |
+| §9.3 | 3DGS 假动画决策 | **[决策已定]** | 仅文档敲定，代码改动归 §9.4 |
+| §9.4 | 前端硬件接入骨架 | 待做 | `front/lib/feature-flags.ts` 不存在 |
 
 ## 1. 主界面（控制中心）— P0
 
@@ -40,9 +82,12 @@
 
 ## 3. 高斯泼溅交付形态 — P1
 
-队友默认形态是“用户上传视频，后端训练再显示”。教学场景里没法等训练，改成预设。
+队友设计的预期形态是"用户上传视频，后端训练再显示"，但实际 `gaussian-splat-viewer.tsx`
+当前根本没有上传 UI——`viewState === 'idle'` 时只有一个"开始三维重建"按钮触发 mock
+进度条。教学场景里没法等真实训练，所以决定**保持无上传形态**，长期走预设 `.ply`。
 
-- [ ] 移除前端上传视频入口（`UPLOAD_VIDEO` endpoint 保留但 UI 隐藏）
+- [ ] 确认前端无上传入口的现状（不需要"移除"，但 `UPLOAD_VIDEO` endpoint 常量保留，
+      等 §9.4 真接通时再用）
 - [ ] 后端预生成 1 个示范 `.ply`（焊缝样本），放到 `backend/static/3dgs/model_light.ply`
 - [ ] 渐进式显示：分轮加载点云，第一帧只渲染 20% 高斯点，之后逐步追加到 30%、60%、100%
   - 实现：把 `.ply` 切成 3-4 个分块文件，按序拉取并 merge 到 BufferGeometry
@@ -132,7 +177,7 @@ P1 3DGS 渐进形态，然后 P2 一组，最后 P3。
   启动时若发现 `welding.db` 不存在就从 `welding.db.seed` 复制一份
 - 这是 destructive 操作（标定数据放在不入仓的 db 文件里），明天动手前先备份本地 db
 
-### 9.3 高斯泼溅“摄像头采集”是 UI 假动画，不调摄像头（决策已定）
+### 9.3 高斯泼溅“摄像头采集”是 UI 假动画，不调摄像头【决策已定】
 
 经查 `gaussian-splat-viewer.tsx`：
 - 没有 `getUserMedia` / `<video>` / `navigator.mediaDevices` 调用
