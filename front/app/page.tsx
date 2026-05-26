@@ -6,7 +6,7 @@ import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Home, Settings, User, Activity, TrendingUp, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut, Trophy } from "lucide-react"
+import { Home, Settings, User, Activity, TrendingUp, FileDown, Eye, Brain, GraduationCap, GitBranch, LogOut, Trophy, Box } from "lucide-react"
 import Image from "next/image"
 import { API_ENDPOINTS } from "@/lib/api"
 import { getPredictionCacheKey, getRadarCacheKey } from "@/lib/storage"
@@ -92,7 +92,7 @@ export default function WeldingDetectionSystem() {
     { id: "data-tree", label: "数据树", icon: GitBranch },
     { id: "comparison", label: "学生对比", icon: Trophy },
     { id: "analysis", label: "报告导出", icon: FileDown },
-    { id: "detection", label: "焊缝检测", icon: Eye },
+    { id: "detection", label: "WeldNet 智能检测", icon: Eye },
     { id: "teacher", label: "AI 教师", icon: GraduationCap },
     { id: "prediction", label: "智能预测", icon: Brain },
     { id: "settings", label: "关于我们", icon: Settings },
@@ -600,29 +600,35 @@ function DetectionContent({ setActiveModule, setDetectionResults, detectionResul
   }
 
   return (
-    <div className="h-full p-6">
+    <div className="p-6">
       {/* 实时检测模式 - 全宽显示 */}
       {detectionMode === 'realtime' ? (
-        <div className="h-full">
-          {/* 模式选择器 */}
-          <div className="flex justify-between items-center mb-4">
+        <div className="space-y-6">
+          <div className="flex justify-between items-center">
             <h2 className="text-white text-2xl font-bold flex items-center">
               <Eye className="w-7 h-7 mr-3 text-blue-400" />
-              焊缝智能检测
+              WeldNet 智能检测系统
             </h2>
-            <div className="hidden">
-              {/* 切换器已隐藏 */}
-            </div>
           </div>
-          {/* YOLORealtimeDetector 自带完整布局 */}
-          <div className="h-[calc(100%-60px)]">
-            <YOLORealtimeDetector
-              liveState={yoloLive}
-              setLiveState={setYoloLive}
-              onSendData={sendYOLODataToPrediction}
-              onConsultTeacher={onConsultTeacher}
-            />
-          </div>
+          <YOLORealtimeDetector
+            liveState={yoloLive}
+            setLiveState={setYoloLive}
+            onSendData={sendYOLODataToPrediction}
+            onConsultTeacher={onConsultTeacher}
+          />
+          <Card className="bg-slate-800/50 border-slate-600 overflow-hidden">
+            <CardHeader>
+              <CardTitle className="text-white flex items-center">
+                <Box className="w-6 h-6 mr-2 text-blue-400" />
+                3D 重构视图
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0">
+              <div className="w-full h-[800px]">
+                <GaussianSplatViewer modelUrl={API_ENDPOINTS.MODEL_3DGS} />
+              </div>
+            </CardContent>
+          </Card>
         </div>
       ) : (
         /* 文件上传模式 - 2列布局 */
@@ -633,7 +639,7 @@ function DetectionContent({ setActiveModule, setDetectionResults, detectionResul
               <CardTitle className="text-white flex items-center justify-between">
                 <div className="flex items-center">
                   <Eye className="w-6 h-6 mr-2 text-blue-400" />
-                  焊缝智能检测
+                  WeldNet 智能检测系统
                 </div>
                 {/* 检测模式选择器 - 已隐藏 */}
                 <div className="hidden"></div>

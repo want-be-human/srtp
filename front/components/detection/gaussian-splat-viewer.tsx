@@ -103,6 +103,24 @@ interface ParsedData {
   center: [number, number, number]
 }
 
+// 切走再回不要重新 fetch + parse 这 1.99MB PLY，太磨叽
+const _splatCache = new Map<string, ParsedData>()
+
+// viewer unmount 时 React state 全丢，重新挂回去会跳回 idle 让用户再点一次"开始"。
+// 这里按 (mini, url) 把运行时 state 留住，重挂时续上。mini 和 detection 分开存，
+// 不然 dashboard 看完 mini 的 ready 会让 detection 第一次进来跳过 pipeline 动画。
+interface ViewerStateSnapshot {
+  viewState: ViewState
+  reveal: boolean
+  autoRotate: boolean
+  splatCount: number
+  totalSplats: number
+  pipelineStage: number
+  pipelineProgress: number
+}
+const _viewerStateCache = new Map<string, ViewerStateSnapshot>()
+const cacheKey = (mini: boolean, modelUrl: string) => `${mini ? 'mini' : 'full'}:${modelUrl}`
+
 function SplatRenderer({
   modelUrl,
   reveal,
@@ -133,6 +151,27 @@ function SplatRenderer({
     if (loadedRef.current) return
 
     async function load() {
+      const cached = _splatCache.get(modelUrl)
+      if (cached) {
+        centerRef.current.set(cached.center[0], cached.center[1], cached.center[2])
+        dataRef.current = cached
+        loadedRef.current = true
+        onLoadUpdate({
+          stage: 'ready',
+          message: '就绪',
+          progress: 100,
+          count: cached.count,
+          splatCenter: cached.center,
+        })
+        // 这里不能用 revealRequestedRef.current，那个 ref 由另一个 useEffect 写，
+        // 跟 load 这个 useEffect 是并行 schedule，第一次 mount 时基本还没赋值。
+        // 直接看 prop reveal 才能正确触发 instant
+        if (reveal && !revealingRef.current) {
+          startReveal(true)
+        }
+        return
+      }
+
       onLoadUpdate({ stage: 'fetching', message: '准备模型数据...', progress: 0, count: 0, splatCenter: [0, 0, 0] })
 
       try {
@@ -198,8 +237,10 @@ function SplatRenderer({
 
         const cx = sumX / count, cy = sumY / count, cz = sumZ / count
         centerRef.current.set(cx, cy, cz)
-        dataRef.current = { positions: pos, colors: col, count, center: [cx, cy, cz] }
+        const parsed: ParsedData = { positions: pos, colors: col, count, center: [cx, cy, cz] }
+        dataRef.current = parsed
         loadedRef.current = true
+        _splatCache.set(modelUrl, parsed)
 
         onLoadUpdate({ stage: 'ready', message: '就绪', progress: 100, count, splatCenter: [cx, cy, cz] })
 
@@ -220,7 +261,7 @@ function SplatRenderer({
     }
   }, [modelUrl])
 
-  function startReveal() {
+  function startReveal(instant = false) {
     const data = dataRef.current
     if (!data || revealingRef.current) return
     revealingRef.current = true
@@ -241,6 +282,19 @@ function SplatRenderer({
 
     camera.position.set(data.center[0] + 8, data.center[1] + 3, data.center[2] + 6)
     camera.lookAt(data.center[0], data.center[1], data.center[2])
+
+    if (instant) {
+      // 已经看过一次了，一口气把全部点摆出来，不再跑两秒的渐进
+      const geom = new THREE.BufferGeometry()
+      geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+      const points = new THREE.Points(geom, mat)
+      scene.add(points)
+      batchedPointsRef.current.push(points)
+      onRevealProgress?.(1.0, count)
+      onRevealComplete?.()
+      return
+    }
 
     let batchIndex = 0
     let totalRevealed = 0
@@ -351,16 +405,33 @@ function SplatRenderer({
 }
 
 export function GaussianSplatViewer({ modelUrl, detectionScores, mini = false }: GaussianSplatViewerProps) {
-  const [viewState, setViewState] = useState<ViewState>(mini ? 'revealing' : 'idle')
-  const [pipelineStage, setPipelineStage] = useState(-1)
+  const stateCacheKey = cacheKey(mini, modelUrl)
+  const snap = _viewerStateCache.get(stateCacheKey)
+  // 之前在 processing 或 revealing 切走，那俩 timer 已经死了没法接着跑。干脆当
+  // 完成态续上：让 load 命中 PLY cache 后一次 instant reveal，用户切回看到的
+  // 就是完整模型，不必从头再走一遍 pipeline + 渐进。idle / error 不值得续。
+  let resumable: ViewerStateSnapshot | undefined
+  if (snap && snap.viewState !== 'idle' && snap.viewState !== 'error') {
+    resumable = snap.viewState === 'ready'
+      ? snap
+      : { ...snap, viewState: 'ready', reveal: true, splatCount: snap.totalSplats }
+  }
+  const [viewState, setViewState] = useState<ViewState>(resumable?.viewState ?? (mini ? 'revealing' : 'idle'))
+  const [pipelineStage, setPipelineStage] = useState(resumable?.pipelineStage ?? -1)
   const [pipelineDetail, setPipelineDetail] = useState('')
-  const [pipelineProgress, setPipelineProgress] = useState(0)
-  const [splatCount, setSplatCount] = useState(0)
-  const [totalSplats, setTotalSplats] = useState(0)
-  const [reveal, setReveal] = useState(mini)
-  const [autoRotate, setAutoRotate] = useState(mini)
+  const [pipelineProgress, setPipelineProgress] = useState(resumable?.pipelineProgress ?? 0)
+  const [splatCount, setSplatCount] = useState(resumable?.splatCount ?? 0)
+  const [totalSplats, setTotalSplats] = useState(resumable?.totalSplats ?? 0)
+  const [reveal, setReveal] = useState(resumable?.reveal ?? mini)
+  const [autoRotate, setAutoRotate] = useState(resumable?.autoRotate ?? mini)
   const [hud, setHud] = useState({ x: '0', y: '0', z: '0', dist: '0', size: '0.080' })
   const pipelineTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    _viewerStateCache.set(stateCacheKey, {
+      viewState, reveal, autoRotate, splatCount, totalSplats, pipelineStage, pipelineProgress,
+    })
+  }, [stateCacheKey, viewState, reveal, autoRotate, splatCount, totalSplats, pipelineStage, pipelineProgress])
 
   useEffect(() => {
     // mini 模式不渲染 HUD，500ms 轮询 + setHud 重渲一律省掉

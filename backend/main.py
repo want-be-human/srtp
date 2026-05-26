@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 
 _BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# 在所有模块导入之前先加载 .env 文件，确保环境变量可用
+# 先 load .env，后面 import 的模块才能从 os.environ 拿到 key
 load_dotenv(dotenv_path=os.path.join(_BACKEND_DIR, '.env'))
 
 # welding.db 不再入仓（标定/记录被 pull 覆盖过太多次），新机器从 welding.db.seed
