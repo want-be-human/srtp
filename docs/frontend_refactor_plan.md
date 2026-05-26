@@ -43,10 +43,10 @@ P0 控制中心 + P1-A 检测页（§2.x）+ 两个合并必修（§9.1 §9.2）
 | §3.2 | 后端预生成 .ply | placeholder 已上 `bd0f9da` / `77790fd`（5000→8000 点拉亮），真焊缝模型待替换 | `backend/static/3dgs/model_light.ply` |
 | §3.3 | 渐进显示 20→30→60→100% | 待做 | `gaussian-splat-viewer.tsx` REVEAL 批次逻辑 |
 | §3.4 | 首屏 30 秒预算 | 待做 | 同 §3.3 |
-| §4.1 | lesson-plan 合到 prediction module | 待做 | `page.tsx::activeModule` 合 case |
-| §4.2 | 报告改单人导出 | 待做 | `backend/api/lesson_plan.py` 加 `student_id` 参数 |
-| §4.3 | PDF 改静态模板查表 | 待做 | `backend/services/pdf_generator/` |
-| §4.4 | AI 分析 API 配置修复 | 待做 | `backend/api/teacher.py` + `.env` |
+| §4.1 | lesson-plan 合到 prediction module | 完成 `adb6a04` | `page.tsx` case 'prediction' 合 + sidebar 删 analysis |
+| §4.2 | 报告改单人导出 | 完成 `adb6a04` | lesson_plan.py / dashboard.py / standalone / lesson-plan-export 全链路按 student_id filter |
+| §4.3 | PDF 改静态模板查表 | 完成 `adb6a04`（现状已是规则匹配，PDF subprocess 不走 LLM） | `_get_cached_or_quick_recommendations` 按总分区间生成 15-18 条 |
+| §4.4 | AI 分析 API 配置修复 | 完成 `adb6a04` | `config.py` 加 OPENAI_BASE_URL/MODEL fallback + 前端 aiError 状态 + AIOutputBox 红 banner |
 | §5.1 | 数据树加 PK 按钮 | 待做 | `DataTreeContent` 加 mode toggle |
 | §5.2 | 删独立学生对比 sidebar 入口 | 待做 | `page.tsx` sidebar 数组 |
 | §6.1 | AI 教师历史对话入口 | 待做 | `components/ai-teacher/` |
