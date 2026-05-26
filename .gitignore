@@ -34,6 +34,9 @@ backend/.env.local
 runs/
 *.pt.bak
 
+# 标定/检测记录数据库（不入仓避免 pull 覆盖本地标定，新机器从 welding.db.seed 还原）
+backend/welding.db
+
 # 本地数据辅助脚本（不入仓库）
 backend/scripts/seed_*.py
 backend/scripts/purge_*.py

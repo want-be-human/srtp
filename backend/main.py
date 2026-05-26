@@ -1,12 +1,23 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+import shutil
 import uvicorn
 import os
 from dotenv import load_dotenv
 
+_BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
+
 # 在所有模块导入之前先加载 .env 文件，确保环境变量可用
-_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-load_dotenv(dotenv_path=_env_path)
+load_dotenv(dotenv_path=os.path.join(_BACKEND_DIR, '.env'))
+
+# welding.db 不再入仓（标定/记录被 pull 覆盖过太多次），新机器从 welding.db.seed
+# 复制一份冷启动。已存在就不动，保留用户本地的标定与记录。
+_db_path = os.path.join(_BACKEND_DIR, 'welding.db')
+_seed_path = os.path.join(_BACKEND_DIR, 'welding.db.seed')
+if not os.path.exists(_db_path) and os.path.exists(_seed_path):
+    shutil.copyfile(_seed_path, _db_path)
+    print("[INFO] welding.db 不存在，从 welding.db.seed 复制初始化")
 
 # 导入数据库设置
 from database import engine, Base
@@ -84,6 +95,11 @@ app.include_router(predict.router, prefix="/api/v1", tags=["Predict"])
 app.include_router(lesson_plan.router, prefix="/api/v1", tags=["Lesson Plan"])
 app.include_router(auth.router, prefix="/api/v1", tags=["Auth"])
 app.include_router(calibration.router, prefix="/api/v1", tags=["Calibration"])
+
+# /static 给前端 3DGS viewer 拉 .ply 用，目录缺则建空
+_static_dir = os.path.join(_BACKEND_DIR, 'static')
+os.makedirs(_static_dir, exist_ok=True)
+app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 
 @app.get("/")

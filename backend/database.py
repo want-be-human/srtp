@@ -1,9 +1,13 @@
+import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# 数据库文件路径
-SQLALCHEMY_DATABASE_URL = "sqlite:///./welding.db"
+# 锚到 backend/，否则 uvicorn 从别处启动时会在 cwd 创出另一个 welding.db，
+# 跟 main.py 的 seed 拷贝目标不一致
+_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "welding.db")
+SQLALCHEMY_DATABASE_URL = f"sqlite:///{_DB_PATH}"
 
 # 创建数据库引擎（优化连接池配置）
 engine = create_engine(
