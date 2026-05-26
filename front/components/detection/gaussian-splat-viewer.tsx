@@ -46,8 +46,10 @@ const FRAGMENT_SHADER = `
   }
 `
 
-const REVEAL_BATCH_COUNT = 20
-const REVEAL_BATCH_INTERVAL = 100
+// 渐进 reveal 按 plan §3.3 分 4 段：首屏立刻 20%，之后 30%、60%、100%
+// 第一段不走 setInterval 第一次 tick，inline 立刻渲染让用户进页面就有东西看
+const REVEAL_MILESTONES = [0.2, 0.3, 0.6, 1.0]
+const REVEAL_BATCH_INTERVAL = 500
 
 const PIPELINE_STAGES = [
   {
@@ -267,7 +269,6 @@ function SplatRenderer({
     revealingRef.current = true
 
     const { positions, colors, count } = data
-    const batchSize = Math.ceil(count / REVEAL_BATCH_COUNT)
 
     const mat = new THREE.ShaderMaterial({
       vertexShader: VERTEX_SHADER,
@@ -297,43 +298,50 @@ function SplatRenderer({
     }
 
     let batchIndex = 0
-    let totalRevealed = 0
+    let prevEnd = 0
 
-    revealIntervalRef.current = setInterval(() => {
-      if (batchIndex >= REVEAL_BATCH_COUNT) {
+    const tickBatch = () => {
+      if (batchIndex >= REVEAL_MILESTONES.length) {
         if (revealIntervalRef.current) clearInterval(revealIntervalRef.current)
         onRevealComplete?.()
         return
       }
 
-      const start = batchIndex * batchSize
-      const end = Math.min(start + batchSize, count)
+      const milestone = REVEAL_MILESTONES[batchIndex]
+      const end = Math.min(count, Math.ceil(count * milestone))
+      const start = prevEnd
       const batchCount = end - start
 
-      const batchPos = new Float32Array(batchCount * 3)
-      const batchCol = new Float32Array(batchCount * 3)
-      for (let i = 0; i < batchCount; i++) {
-        const src = start + i
-        batchPos[i * 3] = positions[src * 3]
-        batchPos[i * 3 + 1] = positions[src * 3 + 1]
-        batchPos[i * 3 + 2] = positions[src * 3 + 2]
-        batchCol[i * 3] = colors[src * 3]
-        batchCol[i * 3 + 1] = colors[src * 3 + 1]
-        batchCol[i * 3 + 2] = colors[src * 3 + 2]
+      if (batchCount > 0) {
+        const batchPos = new Float32Array(batchCount * 3)
+        const batchCol = new Float32Array(batchCount * 3)
+        for (let i = 0; i < batchCount; i++) {
+          const src = start + i
+          batchPos[i * 3] = positions[src * 3]
+          batchPos[i * 3 + 1] = positions[src * 3 + 1]
+          batchPos[i * 3 + 2] = positions[src * 3 + 2]
+          batchCol[i * 3] = colors[src * 3]
+          batchCol[i * 3 + 1] = colors[src * 3 + 1]
+          batchCol[i * 3 + 2] = colors[src * 3 + 2]
+        }
+
+        const geom = new THREE.BufferGeometry()
+        geom.setAttribute('position', new THREE.BufferAttribute(batchPos, 3))
+        geom.setAttribute('color', new THREE.BufferAttribute(batchCol, 3))
+
+        const points = new THREE.Points(geom, mat)
+        scene.add(points)
+        batchedPointsRef.current.push(points)
       }
 
-      const geom = new THREE.BufferGeometry()
-      geom.setAttribute('position', new THREE.BufferAttribute(batchPos, 3))
-      geom.setAttribute('color', new THREE.BufferAttribute(batchCol, 3))
-
-      const points = new THREE.Points(geom, mat)
-      scene.add(points)
-      batchedPointsRef.current.push(points)
-
+      prevEnd = end
       batchIndex++
-      totalRevealed += batchCount
-      onRevealProgress?.(batchIndex / REVEAL_BATCH_COUNT, totalRevealed)
-    }, REVEAL_BATCH_INTERVAL)
+      onRevealProgress?.(milestone, end)
+    }
+
+    // 首段立刻渲染让首屏有东西，剩下交给 interval 拉 30 / 60 / 100
+    tickBatch()
+    revealIntervalRef.current = setInterval(tickBatch, REVEAL_BATCH_INTERVAL)
   }
 
   useEffect(() => {
