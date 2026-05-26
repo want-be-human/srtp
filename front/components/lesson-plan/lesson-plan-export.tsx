@@ -380,26 +380,28 @@ export function LessonPlanExportContent() {
         </div>
       )}
 
-      {/* 数据概览 - 使用真实数据 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-        <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700">
-          <CardContent className="p-6">
-            <div className="flex items-center">
-              <Users className="h-8 w-8 text-blue-400" />
-              <div className="ml-4">
-                <p className="text-sm font-medium text-gray-400">学生总数</p>
-                <p className="text-2xl font-bold text-white">{lessonData?.total_students ?? 0}</p>
+      {/* 数据概览 - 使用真实数据。单人模式藏掉"学生总数"卡，那个 KPI 单人=1 没意义 */}
+      <div className={studentId ? "grid grid-cols-1 md:grid-cols-3 gap-6" : "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6"}>
+        {!studentId && (
+          <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700">
+            <CardContent className="p-6">
+              <div className="flex items-center">
+                <Users className="h-8 w-8 text-blue-400" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-400">学生总数</p>
+                  <p className="text-2xl font-bold text-white">{lessonData?.total_students ?? 0}</p>
+                </div>
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
 
         <Card className="bg-gradient-to-br from-gray-900 to-slate-800 border-slate-700">
           <CardContent className="p-6">
             <div className="flex items-center">
               <Target className="h-8 w-8 text-green-400" />
               <div className="ml-4">
-                <p className="text-sm font-medium text-gray-400">检测总数</p>
+                <p className="text-sm font-medium text-gray-400">{studentId ? "本人检测次数" : "检测总数"}</p>
                 <p className="text-2xl font-bold text-white">{lessonData?.total_detections ?? 0}</p>
               </div>
             </div>

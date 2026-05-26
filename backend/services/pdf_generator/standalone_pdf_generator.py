@@ -72,6 +72,9 @@ class BatchAnalysisData:
     student_name: Optional[str] = None
     student_id: Optional[str] = None
 
+    # 各技能维度按检测序号的曲线，画在总分曲线下面看哪一项在拖后腿
+    skill_dim_trends: Dict[str, List[float]] = field(default_factory=dict)
+
 
 # ============================================
 # PDF模板配置
@@ -152,6 +155,43 @@ class ChartGenerator:
             plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
             output_buffer.seek(0)
 
+        plt.close()
+        return output_buffer
+
+    @staticmethod
+    def create_skill_multi_trend_chart(dim_trends: Dict[str, List[float]], output_buffer: io.BytesIO = None):
+        """三个技能维度同序号画在一起，看哪个最拖后腿"""
+        ChartGenerator.setup_chinese_font()
+
+        if not dim_trends or all(len(v) == 0 for v in dim_trends.values()):
+            return None
+
+        fig, ax = plt.subplots(figsize=(10, 3.5))
+
+        palette = {
+            '光滑度': '#2563eb',
+            '间距': '#10b981',
+            '缺陷控制': '#f97316',
+        }
+        for name, values in dim_trends.items():
+            if not values:
+                continue
+            color = palette.get(name, '#64748b')
+            ax.plot(range(1, len(values) + 1), values, marker='o', linewidth=1.8, markersize=4, label=name, color=color)
+
+        ax.set_xlabel('检测序号', fontsize=10)
+        ax.set_ylabel('分数', fontsize=10)
+        ax.set_title('技能维度趋势对比', fontsize=12, fontweight='bold', pad=10)
+        ax.set_ylim(50, 100)
+        ax.legend(loc='lower right', fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+
+        if output_buffer is None:
+            output_buffer = io.BytesIO()
+        plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+        output_buffer.seek(0)
         plt.close()
         return output_buffer
 
@@ -433,6 +473,16 @@ class DataAnalysisPDFGenerator:
                     story.append(Spacer(1, 10))
             except Exception as e:
                 print(f"[WARN] 趋势图生成失败: {e}")
+
+        if data.skill_dim_trends:
+            try:
+                multi_buffer = ChartGenerator.create_skill_multi_trend_chart(data.skill_dim_trends)
+                if multi_buffer:
+                    story.append(Paragraph("技能维度对比曲线", styles['subheading']))
+                    story.append(Image(multi_buffer, width=15*cm, height=5*cm))
+                    story.append(Spacer(1, 10))
+            except Exception as e:
+                print(f"[WARN] 多维曲线生成失败: {e}")
 
         # 趋势分析文字
         if data.skill_trend and len(data.skill_trend) >= 2:
@@ -731,9 +781,12 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
 
         # 趋势按时间升序铺，看起来"由旧到新"
         skill_trend = []
+        skill_dim_trends: Dict[str, List[float]] = {'光滑度': [], '间距': [], '缺陷控制': []}
         for r in reversed(recent_records):
-            score = r.get('total_score', r.get('score', 0))
-            skill_trend.append(float(score))
+            skill_trend.append(float(r.get('total_score', r.get('score', 0))))
+            skill_dim_trends['光滑度'].append(float(r.get('smoothness_score', 0)))
+            skill_dim_trends['间距'].append(float(r.get('spacing_score', r.get('width_score', 0))))
+            skill_dim_trends['缺陷控制'].append(float(r.get('defect_type_score', r.get('defect_score', 0))))
 
         defect_stats = {}
         defect_count = 0
@@ -773,16 +826,19 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
             generated_at=datetime.now().isoformat(),
             student_name=os.environ.get("PDF_STUDENT_NAME"),
             student_id=student_id,
+            skill_dim_trends=skill_dim_trends,
         )
 
     except Exception as e:
+        # stack trace 留给 stderr 让运维查；PDF 里给学生 / 老师看的就一句话
+        import traceback
+        traceback.print_exc()
         print(f"   API获取失败: {e}")
-        # 返回空数据而不是模拟数据
         return BatchAnalysisData(
             batch_number=1,
             batch_size=0,
             total_records=0,
-            report_period="API连接失败",
+            report_period="数据暂时不可用",
             average_score=0,
             score_distribution={'优秀': 0, '良好': 0, '合格': 0, '需改进': 0},
             skill_analysis={},
@@ -790,9 +846,11 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
             defect_stats={},
             defect_rate=0,
             detail_records=[],
-            ai_summary=f"API连接失败: {str(e)}",
-            key_recommendations=["请检查后端服务是否正常运行"],
-            generated_at=datetime.now().isoformat()
+            ai_summary="本次未能拉取到检测数据，请联系老师或稍后重试",
+            key_recommendations=["报告数据缺失，建议确认服务状态后重新生成"],
+            generated_at=datetime.now().isoformat(),
+            student_name=os.environ.get("PDF_STUDENT_NAME"),
+            student_id=os.environ.get("PDF_STUDENT_ID"),
         )
 
 
