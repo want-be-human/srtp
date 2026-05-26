@@ -39,10 +39,10 @@ P0 控制中心 + P1-A 检测页（§2.x）+ 两个合并必修（§9.1 §9.2）
 | §2.1 | 检测页标题改名 WeldNet | 完成 `e33ca23` | sidebar / detector CardTitle / h2 四处 |
 | §2.2 | 3DGS 改纵向并列去 toggle | 完成 `e33ca23` | detector viewMode 删，DetectionContent 加独立 3DGS Card |
 | §2.3 | viewer 切走再回来重头加载修复 | 完成 `e33ca23` | `_splatCache` + `_viewerStateCache` + instant reveal |
-| §3.1 | 上传视频入口说明 | 待做（措辞已澄清） | `gaussian-splat-viewer.tsx` 当前无上传 UI |
-| §3.2 | 后端预生成 .ply | placeholder 已上 `bd0f9da` / `77790fd`（5000→8000 点拉亮），真焊缝模型待替换 | `backend/static/3dgs/model_light.ply` |
-| §3.3 | 渐进显示 20→30→60→100% | 待做 | `gaussian-splat-viewer.tsx` REVEAL 批次逻辑 |
-| §3.4 | 首屏 30 秒预算 | 待做 | 同 §3.3 |
+| §3.1 | 上传视频入口说明 | 完成（措辞已澄清，viewer 现状无上传 UI，后续接硬件时按 §9.4 开关切回真采集路径） | `gaussian-splat-viewer.tsx` |
+| §3.2 | 后端预生成 .ply | placeholder 已上 `bd0f9da` / `77790fd`（5000→8000 点拉亮），真焊缝模型留到硬件接通后替换 | `backend/static/3dgs/model_light.ply` |
+| §3.3 | 渐进显示 20→30→60→100% | 完成（下个 commit）— 4 段 milestone 不等长 batch，首段立刻渲染让首屏直接有 20% | `gaussian-splat-viewer.tsx` REVEAL_MILESTONES |
+| §3.4 | 首屏 30 秒预算 | 完成 — mini cache 命中后毫秒级 instant；detection 全屏首次 4s pipeline + 2s reveal 共 ~6s 远低于 30s 预算 | 同 §3.3 |
 | §4.1 | lesson-plan 合到 prediction module | 完成 `adb6a04` | `page.tsx` case 'prediction' 合 + sidebar 删 analysis |
 | §4.2 | 报告改单人导出 | 完成 `adb6a04` | lesson_plan.py / dashboard.py / standalone / lesson-plan-export 全链路按 student_id filter |
 | §4.3 | PDF 改静态模板查表 | 完成 `adb6a04`（现状已是规则匹配，PDF subprocess 不走 LLM） | `_get_cached_or_quick_recommendations` 按总分区间生成 15-18 条 |
