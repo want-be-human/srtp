@@ -52,7 +52,7 @@ P0 控制中心 + P1-A 检测页（§2.x）+ §3.x 3DGS 渐进 + §4.x 预测报
 | §5.1 | 数据树加 PK 按钮 | 完成 `9943fc7` — DataTreeContent 加 'tree' \| 'pk' mode toggle，PK 视图复用 StudentComparisonContent | `data-tree-content.tsx` |
 | §5.2 | 删独立学生对比 sidebar 入口 | 完成 `9943fc7` | `page.tsx` sidebar 数组 + 删 case 分支 |
 | §6.1a | AI 教师对话持久化 | 完成 `9943fc7` — 单线程按学号分桶 localStorage + 清空按钮（底层） | `storage.ts` `TEACHER_HISTORY` + `ai-teacher-chat.tsx` |
-| §6.1b | AI 教师多会话历史侧栏 | 完成（下个 commit）— ChatGPT 风格左侧 session 列表，按学号分桶后再分多 session，新建/切换/单删/清空，title 自动取首问前 20 字 | `use-teacher-sessions.ts` + `session-list-sidebar.tsx` |
+| §6.1b | AI 教师多会话历史侧栏 | 完成 `2869108` — ChatGPT 风格左侧 session 列表，按学号分桶后再分多 session，新建/切换/单删/清空，title 自动取首问前 20 字 | `use-teacher-sessions.ts` + `session-list-sidebar.tsx` |
 | §6.2 | LLM 调用失败具体提示 | 完成 `9943fc7` | `teacher.py` 返回 `error_category` + 前端 ERROR_HINTS 翻友好文案 |
 | §6.3 | 共享 deepseek client | 完成 `9943fc7` — 新增 `backend/ai_client.py`，teacher.py 和 ai_analysis.py 走同一个实例 | `ai_client.py` |
 | §7.x | PDF 模板细节 | 待做 | `backend/services/pdf_generator/` |
@@ -127,7 +127,7 @@ P0 控制中心 + P1-A 检测页（§2.x）+ §3.x 3DGS 渐进 + §4.x 预测报
     考虑到学生量不大、对话量更小，且历史只对自己有意义，改成走前端 localStorage。
   - 9943fc7（§6.1a 底层）：按学号分桶 `getTeacherHistoryKey(studentId)`，
     单一对话线程持久化 + 清空按钮，切学号自动加载对应桶。
-  - §6.1b 完整 A 方案（下个 commit）：每个学号桶下再分多 session，每条 session
+  - §6.1b 完整 A 方案 `2869108`：每个学号桶下再分多 session，每条 session
     自带 `{id, createdAt, updatedAt, title, messages}`。新增
     `use-teacher-sessions` hook 管 CRUD，新增 `SessionListSidebar` 组件做
     ChatGPT 风格左侧列表（新建 / 点击切换 / 单条删除 / 二次确认清空全部）；
