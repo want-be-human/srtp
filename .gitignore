@@ -48,4 +48,3 @@ backend/scripts/train_temporal_offline.py
 前端重构.md
 *.tmp
 *.bak
-docs/algorithm_upgrades.md
