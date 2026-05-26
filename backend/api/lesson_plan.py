@@ -1053,6 +1053,10 @@ async def get_pdf_status(task_id: str):
 
     if task["status"] == "completed":
         response["download_url"] = f"/api/v1/lesson-plan/pdf-download/{task_id}"
+        # 把真实文件名也带给前端，前端 a.download 直接用，不然会被前端写死的
+        # "焊接质量分析报告_日期.pdf" 覆盖掉，user 看不到姓名 / 学号
+        if task.get("file_path"):
+            response["filename"] = os.path.basename(task["file_path"])
     elif task["status"] == "failed":
         response["error"] = task.get("error", "未知错误")
 

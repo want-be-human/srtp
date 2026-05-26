@@ -259,6 +259,7 @@ export function LessonPlanExportContent() {
       // 2. 轮询任务状态
       let completed = false
       let pollCount = 0
+      let pdfFilename: string | null = null
       const maxPolls = 120 // 最多轮询2分钟（每秒一次）
 
       while (!completed && pollCount < maxPolls) {
@@ -278,6 +279,7 @@ export function LessonPlanExportContent() {
 
         if (statusData.status === "completed") {
           completed = true
+          pdfFilename = statusData.filename ?? null
           setExportProgress(100)
           setExportStatus("正在下载文件...")
 
@@ -291,7 +293,8 @@ export function LessonPlanExportContent() {
           const url = window.URL.createObjectURL(blob)
           const a = document.createElement("a")
           a.href = url
-          a.download = `焊接质量分析报告_${new Date().toISOString().slice(0, 10)}.pdf`
+          // 用后端给的真名（带姓名 + 学号），拿不到才退化到老格式
+          a.download = pdfFilename ?? `焊接质量分析报告_${new Date().toISOString().slice(0, 10)}.pdf`
           document.body.appendChild(a)
           a.click()
           window.URL.revokeObjectURL(url)
