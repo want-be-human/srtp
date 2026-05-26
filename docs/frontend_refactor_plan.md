@@ -25,22 +25,22 @@ sidebar 项 + 对应 case 分支，不需要动 Next.js routing。
 - 队友只新加了 1 个 commit（`1afd1d2`），除了 3DGS 没有其他超过本端进度的改动，
   不需要做功能取舍
 
-## 0.5 当前 status 一览（截至 2026-05-26 晚）
+## 0.5 进度快照（最近更新 2026-05-26 P1-A 推完之后）
 
-下面整张表是开工状态快照。所有 §1-7 重构主任务和 §9 修复项都是"明天动手"。
-单独标了"决策已定"的只代表方案确定，代码未改。
+P0 控制中心 + P1-A 检测页（§2.x）+ 两个合并必修（§9.1 §9.2）已经落地，剩 §3.x
+3DGS 渐进、§4.x 预测报告合并、§5.x §6.x §7.x 还在 backlog。
 
-| 节 | 标题 | 状态 | 触动的代码位置（明天动） |
+| 节 | 标题 | 状态 | 代码位置 |
 |---|---|---|---|
-| §1.1 | 删 3 张统计卡 | 待做 | `front/app/page.tsx` 或 `components/dashboard/*` |
-| §1.2 | 三入口下移 | 待做 | `front/app/page.tsx` sidebar 顺序 |
-| §1.3 | mini 3DGS 预览框 | 待做 | 新增 `GaussianSplatViewer mini` 模式 |
-| §1.4 | 横向滚动条闪烁 | 待做 | `front/app/layout.tsx` / `globals.css` |
-| §2.1 | 检测页标题改名 WeldNet | 待做 | `yolo-realtime-detector.tsx` CardTitle |
-| §2.2 | 3DGS 改纵向并列去 toggle | 待做 | `yolo-realtime-detector.tsx` viewMode 分支 |
-| §2.3 | viewer 切走再回来重头加载修复 | 待做 | 把 viewer 实例提到父级保活 |
+| §1.1 | 删 3 张统计卡 | 完成 `77790fd` | `front/app/page.tsx` DashboardContent |
+| §1.2 | 三入口下移 | 完成 `77790fd` | `front/app/page.tsx` sidebar 数组 |
+| §1.3 | mini 3DGS 预览框 | 完成 `77790fd` | `GaussianSplatViewer mini` prop |
+| §1.4 | 横向滚动条闪烁 | 完成 `77790fd` + `e33ca23`（main 加 overflow-x-hidden） | `globals.css` / `page.tsx` main 容器 |
+| §2.1 | 检测页标题改名 WeldNet | 完成 `e33ca23` | sidebar / detector CardTitle / h2 四处 |
+| §2.2 | 3DGS 改纵向并列去 toggle | 完成 `e33ca23` | detector viewMode 删，DetectionContent 加独立 3DGS Card |
+| §2.3 | viewer 切走再回来重头加载修复 | 完成 `e33ca23` | `_splatCache` + `_viewerStateCache` + instant reveal |
 | §3.1 | 上传视频入口说明 | 待做（措辞已澄清） | `gaussian-splat-viewer.tsx` 当前无上传 UI |
-| §3.2 | 后端预生成 .ply | 待做 | `backend/static/3dgs/model_light.ply` 不存在 |
+| §3.2 | 后端预生成 .ply | placeholder 已上 `bd0f9da` / `77790fd`（5000→8000 点拉亮），真焊缝模型待替换 | `backend/static/3dgs/model_light.ply` |
 | §3.3 | 渐进显示 20→30→60→100% | 待做 | `gaussian-splat-viewer.tsx` REVEAL 批次逻辑 |
 | §3.4 | 首屏 30 秒预算 | 待做 | 同 §3.3 |
 | §4.1 | lesson-plan 合到 prediction module | 待做 | `page.tsx::activeModule` 合 case |
@@ -53,8 +53,8 @@ sidebar 项 + 对应 case 分支，不需要动 Next.js routing。
 | §6.2 | LLM 调用失败具体提示 | 待做 | `backend/api/teacher.py` + 前端错误回显 |
 | §6.3 | 共享 deepseek client | 待做 | `backend/api/teacher.py` + `lesson_plan.py` |
 | §7.x | PDF 模板细节 | 待做 | `backend/services/pdf_generator/` |
-| §9.1 | `/static/3dgs/...` 404 修法 | 待做 | `backend/main.py` 加 `StaticFiles` |
-| §9.2 | welding.db 持久化修法 | 待做 | `git rm --cached` + `.gitignore` + `.seed` |
+| §9.1 | `/static/3dgs/...` 404 修法 | 完成 `bd0f9da` | `backend/main.py` StaticFiles mount |
+| §9.2 | welding.db 持久化修法 | 完成 `bd0f9da` | `git rm --cached` + `.gitignore` + `.seed` + `database.py` 锚绝对路径 |
 | §9.3 | 3DGS 假动画决策 | **[决策已定]** | 仅文档敲定，代码改动归 §9.4 |
 | §9.4 | 前端硬件接入骨架 | 待做 | `front/lib/feature-flags.ts` 不存在 |
 
