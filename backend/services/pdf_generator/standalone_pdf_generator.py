@@ -68,6 +68,10 @@ class BatchAnalysisData:
 
     generated_at: str = ""
 
+    # 单人模式时填这俩，PDF 封面和文件名要用；不填就退化成全班报告
+    student_name: Optional[str] = None
+    student_id: Optional[str] = None
+
 
 # ============================================
 # PDF模板配置
@@ -370,6 +374,12 @@ class DataAnalysisPDFGenerator:
 
         # ========== 封面 ==========
         story.append(Paragraph("焊缝质量检测分析报告", styles['title']))
+        if data.student_name or data.student_id:
+            who = data.student_name or "未署名"
+            sid = data.student_id or "—"
+            story.append(Paragraph(f"学生：{who}（学号 {sid}）", styles['subtitle']))
+        else:
+            story.append(Paragraph("全班聚合报告", styles['subtitle']))
         story.append(Paragraph(f"第 {data.batch_number} 批次 | {data.batch_size} 条数据", styles['subtitle']))
         story.append(Paragraph(f"时间范围: {data.report_period}", styles['subtitle']))
         story.append(Spacer(1, 20))
@@ -714,16 +724,17 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
                 else:
                     score_dist['需改进'] += 1
 
-        # 计算趋势数据（使用真实数据）
-        skill_trend = []
-        if detail_records:
-            # 取最近30条数据的总分作为趋势
-            recent_records = detail_records[-30:] if len(detail_records) > 30 else detail_records
-            for r in recent_records:
-                score = r.get('total_score', r.get('score', 0))
-                skill_trend.append(float(score))
+        # dashboard/history 按 timestamp 降序返回，开头 30 条是最新批次。
+        # 趋势曲线和明细表都基于同一批，避免之前"末尾 30 取最旧 / 开头 30 取最新"
+        # 两边切片不一致的 bug
+        recent_records = detail_records[:30]
 
-        # 计算缺陷统计（使用真实数据）
+        # 趋势按时间升序铺，看起来"由旧到新"
+        skill_trend = []
+        for r in reversed(recent_records):
+            score = r.get('total_score', r.get('score', 0))
+            skill_trend.append(float(score))
+
         defect_stats = {}
         defect_count = 0
         for rec in detail_records:
@@ -734,9 +745,8 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
 
         defect_rate = (defect_count / len(detail_records) * 100) if detail_records else 0
 
-        # 构建详细记录列表（用于表格展示）
         formatted_records = []
-        for r in detail_records[:30]:  # 只取最近30条
+        for r in recent_records:
             formatted_records.append({
                 'timestamp': r.get('timestamp', ''),
                 'total_score': r.get('total_score', r.get('score', 0)),
@@ -760,7 +770,9 @@ def fetch_batch_data_from_api() -> BatchAnalysisData:
             detail_records=formatted_records,
             ai_summary="",
             key_recommendations=api_data.get('teaching_recommendations', [])[:3],
-            generated_at=datetime.now().isoformat()
+            generated_at=datetime.now().isoformat(),
+            student_name=os.environ.get("PDF_STUDENT_NAME"),
+            student_id=student_id,
         )
 
     except Exception as e:
@@ -802,8 +814,9 @@ def main():
     print(f"   平均分: {data.average_score:.1f}")
     print(f"   缺陷率: {data.defect_rate:.1f}%")
 
-    # 生成PDF - 文件名统一格式
-    filename = f"焊接质量分析报告_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
+    # 文件名带学号避免不同学生连导互相覆盖；全班报告时退化成无学号
+    sid_part = f"{data.student_id}_" if data.student_id else ""
+    filename = f"焊接质量分析报告_{sid_part}{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf"
 
     generator = DataAnalysisPDFGenerator()
     generator.generate_pdf(data, filename)

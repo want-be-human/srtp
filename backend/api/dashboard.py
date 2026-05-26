@@ -20,7 +20,7 @@ class WeldingRecordOut(BaseModel):
     spacing_score: float
     defect_type_score: float
     total_score: float
-    # 不加这个 PDF 报告的缺陷类型列会全是"未知"——pydantic 按 schema 过滤会把
+    # 不加这个 PDF 报告的缺陷类型列会全是"未知"。pydantic 按 schema 过滤会把
     # ORM 上的 defect_type_name 字段悄悄丢掉
     defect_type_name: Optional[str] = None
 

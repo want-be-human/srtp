@@ -111,9 +111,6 @@ async def get_lesson_plan_data(
         if total_detections == 0:
             return _generate_sample_lesson_data()
 
-        avg_result = base_q.with_entities(func.avg(models.WeldingRecord.total_score)).scalar()
-        average_score = float(avg_result) if avg_result else 0
-
         # filter 到具体学生时，「学生数」语义就是 1；全班聚合保留原 hack
         # （每条检测算一个学生，UI 拿来当批次规模指标）
         if student_id:
@@ -125,6 +122,12 @@ async def get_lesson_plan_data(
         recent_records = base_q.order_by(
             desc(models.WeldingRecord.timestamp)
         ).limit(BATCH_SIZE).all()
+
+        # 平均分用 recent 这批算，跟 skill_analysis / defects / progress 同一口径；
+        # 之前 SQL 全量 avg 跟 recent 30 条 _analyze_* 混在一份报告里，超 30 条
+        # 的学生会出"平均分跟趋势曲线对不上"的错觉
+        recent_scores = [r.total_score for r in recent_records if r.total_score is not None]
+        average_score = sum(recent_scores) / len(recent_scores) if recent_scores else 0
 
         # 反转为时间升序（便于趋势分析）
         recent_records = list(reversed(recent_records))
@@ -747,17 +750,13 @@ def _generate_sample_lesson_data() -> LessonPlanData:
 
 
 @router.get("/lesson-plan/ai-analysis", response_model=AILessonAnalysisResponse)
-async def get_ai_lesson_plan_analysis(db: Session = Depends(get_db)):
-    """
-    获取AI报告分析
-    基于教学数据使用AI进行深度分析和教学建议
-
-    Returns:
-        AILessonAnalysisResponse: AI报告分析结果
-    """
+async def get_ai_lesson_plan_analysis(
+    student_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """单人 AI 分析，没带 student_id 退化成全班聚合。"""
     try:
-        # 首先获取基础报告数据
-        lesson_data_response = await get_lesson_plan_data(db)
+        lesson_data_response = await get_lesson_plan_data(student_id=student_id, db=db)
         lesson_data = lesson_data_response.__dict__
 
         # 使用AI服务进行分析
@@ -799,24 +798,17 @@ async def get_ai_lesson_plan_analysis(db: Session = Depends(get_db)):
 
 
 @router.post("/lesson-plan/ai-analysis-custom")
-async def get_custom_ai_lesson_plan_analysis(request_data: Dict[str, Any], db: Session = Depends(get_db)):
-    """
-    自定义AI报告分析
-    基于用户提供的教学数据进行AI分析
-
-    Args:
-        request_data: 包含自定义教学数据的请求体
-
-    Returns:
-        AILessonAnalysisResponse: AI报告分析结果
-    """
+async def get_custom_ai_lesson_plan_analysis(
+    request_data: Dict[str, Any],
+    student_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """前端可以传自己的 lesson_data 让 AI 分析；没传就拉单人/全班默认数据。"""
     try:
-        # 从请求中提取数据，如果没有则使用默认数据
         lesson_data = request_data.get('lesson_data', {})
 
         if not lesson_data:
-            # 如果没有提供数据，获取默认报告数据
-            lesson_data_response = await get_lesson_plan_data(db)
+            lesson_data_response = await get_lesson_plan_data(student_id=student_id, db=db)
             lesson_data = lesson_data_response.__dict__
 
         # 使用AI服务进行分析
@@ -986,6 +978,17 @@ def _generate_pdf_task(task_id: str, student_id: Optional[str] = None):
         env = os.environ.copy()
         if student_id:
             env["PDF_STUDENT_ID"] = student_id
+            # 顺手查一下学生姓名给 PDF 封面用，没记录就只显示学号
+            db = SessionLocal()
+            try:
+                rec = db.query(models.WeldingRecord).filter(
+                    models.WeldingRecord.student_id == student_id,
+                    models.WeldingRecord.student_name.isnot(None),
+                ).order_by(desc(models.WeldingRecord.timestamp)).first()
+                if rec and rec.student_name:
+                    env["PDF_STUDENT_NAME"] = rec.student_name
+            finally:
+                db.close()
 
         result = subprocess.run(
             [sys.executable, pdf_generator_script],
