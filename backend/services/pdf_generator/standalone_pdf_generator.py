@@ -148,11 +148,11 @@ class ChartGenerator:
         plt.tight_layout()
 
         if output_buffer:
-            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
             output_buffer.seek(0)
         else:
             output_buffer = io.BytesIO()
-            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
             output_buffer.seek(0)
 
         plt.close()
@@ -190,7 +190,7 @@ class ChartGenerator:
 
         if output_buffer is None:
             output_buffer = io.BytesIO()
-        plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+        plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
         output_buffer.seek(0)
         plt.close()
         return output_buffer
@@ -224,11 +224,11 @@ class ChartGenerator:
         plt.tight_layout()
 
         if output_buffer:
-            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
             output_buffer.seek(0)
         else:
             output_buffer = io.BytesIO()
-            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
             output_buffer.seek(0)
 
         plt.close()
@@ -265,11 +265,11 @@ class ChartGenerator:
         plt.tight_layout()
 
         if output_buffer:
-            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
             output_buffer.seek(0)
         else:
             output_buffer = io.BytesIO()
-            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
             output_buffer.seek(0)
 
         plt.close()
@@ -305,11 +305,11 @@ class ChartGenerator:
         plt.tight_layout()
 
         if output_buffer:
-            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
             output_buffer.seek(0)
         else:
             output_buffer = io.BytesIO()
-            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight', optimize=True)
+            plt.savefig(output_buffer, format='png', dpi=CHART_DPI, bbox_inches='tight')
             output_buffer.seek(0)
 
         plt.close()
