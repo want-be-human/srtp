@@ -25,10 +25,10 @@ import models
 try:
     from defect_types import TRUE_DEFECT_TYPES, ALL_DEFECT_TYPES_CN, DEFECT_EN_TO_CN, NON_DEFECT_LABELS
 except ImportError:
-    # 备用定义
-    TRUE_DEFECT_TYPES = ['焊接不良', '裂纹', '钢筋过剩', '气孔', '飞溅', '咬边', '焊瘤', '未熔合', '夹渣', '变形', '表面粗糙', '焊穿', '错边', '电弧擦伤', '变色', '工具痕迹']
+    # 备用定义（跟 best.pt 6 类对齐）
+    TRUE_DEFECT_TYPES = ['焊接不良', '裂纹', '焊缝过高', '气孔', '飞溅']
     ALL_DEFECT_TYPES_CN = TRUE_DEFECT_TYPES + ['良好焊缝']
-    NON_DEFECT_LABELS = frozenset({'Good Weld', '良好焊缝', '无缺陷', '无', '未知', ''})
+    NON_DEFECT_LABELS = frozenset({'Good Welding', 'Good Weld', '良好焊缝', '无缺陷', '无', '未知', ''})
 
 from config import OPTIMAL_WELD_WIDTH_MM
 
@@ -817,7 +817,8 @@ class RadarDataResponse(BaseModel):
     data_source: str
 
 
-DEFECT_RADAR_AXES = ["夹渣", "气孔", "焊瘤", "咬边", "未熔合", "裂纹"]
+# 雷达维度跟 best.pt 实际类对齐（去掉 Good Welding）；5 维，比留死维诚实
+DEFECT_RADAR_AXES = ["焊接不良", "裂纹", "焊缝过高", "气孔", "飞溅"]
 SKILL_RADAR_AXES = (
     "光滑度均值", "宽度准度", "缺陷控制",
     "宽度稳定性", "进步速率", "缺陷集中度",

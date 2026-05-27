@@ -28,8 +28,9 @@ export interface RadarData {
 
 // 后端无数据时会带回 data_source=DATABASE_EMPTY，这里用全零兜底，
 // 顺便挂一个「暂无数据」角标。
+// 维度跟后端 DEFECT_RADAR_AXES + best.pt 6 类对齐，5 维（去掉良好焊缝）。
 const EMPTY_DEFECT_DATA: Record<string, number> = {
-  "夹渣": 0, "气孔": 0, "焊瘤": 0, "咬边": 0, "未熔合": 0, "裂纹": 0,
+  "焊接不良": 0, "裂纹": 0, "焊缝过高": 0, "气孔": 0, "飞溅": 0,
 }
 export const EMPTY_SKILL_DATA: Record<string, number> = {
   "光滑度均值": 0, "宽度准度": 0, "缺陷控制": 0, "宽度稳定性": 0, "进步速率": 0, "缺陷集中度": 0,

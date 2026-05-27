@@ -24,19 +24,18 @@ _pdf_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="pdf_gen")
 try:
     from defect_types import DEFECT_EN_TO_CN, TRUE_DEFECT_TYPES, get_severity_level, DEFECT_ID_TO_CN
 except ImportError:
-    # 备用定义
+    # 备用定义（跟 best.pt 6 类对齐）
     DEFECT_EN_TO_CN = {
-        'Poor Weld': '焊接不良', 'Crack': '裂纹', 'Excess Rebar': '钢筋过剩',
-        'Good Weld': '良好焊缝', 'Porosity': '气孔', 'Spatter': '飞溅',
-        'Undercut': '咬边', 'Overlap': '焊瘤', 'Incomplete Fusion': '未熔合',
-        'Inclusion': '夹渣', 'Distortion': '变形', 'Surface Roughness': '表面粗糙',
-        'Excess Penetration': '焊穿', 'Misalignment': '错边', 'Arc Strike': '电弧擦伤',
-        'Discoloration': '变色', 'Tool Mark': '工具痕迹'
+        'Bad Welding': '焊接不良',
+        'Crack': '裂纹',
+        'Excess Reinforcement': '焊缝过高',
+        'Good Welding': '良好焊缝',
+        'Porosity': '气孔',
+        'Spatters': '飞溅',
     }
-    TRUE_DEFECT_TYPES = list(DEFECT_EN_TO_CN.values())
-    TRUE_DEFECT_TYPES.remove('良好焊缝')
+    TRUE_DEFECT_TYPES = ['焊接不良', '裂纹', '焊缝过高', '气孔', '飞溅']
     def get_severity_level(class_id):
-        severity_map = {1: '严重', 8: '严重', 9: '严重', 12: '严重', 0: '中等', 4: '中等', 6: '中等', 7: '中等'}
+        severity_map = {0: '严重', 1: '严重', 4: '中等', 2: '轻微', 5: '轻微'}
         return severity_map.get(class_id, '轻微')
 
 # 导入AI分析服务

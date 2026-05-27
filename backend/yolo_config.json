@@ -1,6 +1,6 @@
 {
   "yolo_model_path": "models/best.pt",
-  "confidence_threshold": 0.3,
+  "confidence_threshold": 0.5,
   "iou_threshold": 0.45,
   "scoring_weights": {
     "smoothness_weight": 0.3,
@@ -8,9 +8,9 @@
     "defect_weight": 0.4
   },
   "width_thresholds": {
-    "min_width_mm": 3.0,
-    "max_width_mm": 8.0,
-    "optimal_width_mm": 5.5
+    "min_width_mm": 9.0,
+    "max_width_mm": 11.0,
+    "optimal_width_mm": 10.0
   },
   "optimization": {
     "enable_cache": true,

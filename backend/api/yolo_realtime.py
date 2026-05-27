@@ -37,14 +37,15 @@ from config import YOLO_CONFIG_FILE  # 配置文件路径，置信度阈值等
 try:
     from defect_types import DEFECT_EN_TO_CN, TRUE_DEFECT_TYPES, NON_DEFECT_LABELS
 except ImportError:
-    NON_DEFECT_LABELS = frozenset({"Good Weld", "良好焊缝", "无缺陷", "无", "未知", ""})
+    # 备用定义（跟 best.pt 6 类对齐）
+    NON_DEFECT_LABELS = frozenset({"Good Welding", "Good Weld", "良好焊缝", "无缺陷", "无", "未知", ""})
     DEFECT_EN_TO_CN = {
-        'Poor Weld': '焊接不良', 'Crack': '裂纹', 'Excess Rebar': '钢筋过剩',
-        'Good Weld': '良好焊缝', 'Porosity': '气孔', 'Spatter': '飞溅',
-        'Undercut': '咬边', 'Overlap': '焊瘤', 'Incomplete Fusion': '未熔合',
-        'Inclusion': '夹渣', 'Distortion': '变形', 'Surface Roughness': '表面粗糙',
-        'Excess Penetration': '焊穿', 'Misalignment': '错边', 'Arc Strike': '电弧擦伤',
-        'Discoloration': '变色', 'Tool Mark': '工具痕迹'
+        'Bad Welding': '焊接不良',
+        'Crack': '裂纹',
+        'Excess Reinforcement': '焊缝过高',
+        'Good Welding': '良好焊缝',
+        'Porosity': '气孔',
+        'Spatters': '飞溅',
     }
 
 # 导入YOLO检测服务（从backend/services/yolo/）

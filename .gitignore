@@ -50,3 +50,5 @@ backend/scripts/
 *.tmp
 *.bak
 docs/
+dataset/
+weldqualityinspectionv9/

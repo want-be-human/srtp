@@ -76,7 +76,7 @@ class IntegratedWeldDetector:
     def _load_config(self, config_file: str = None) -> Dict:
         default_config = {
             "yolo_model_path": "models/best.pt",
-            "confidence_threshold": 0.3,
+            "confidence_threshold": 0.5,
             "iou_threshold": 0.45,
             "scoring_weights": {
                 "smoothness_weight": 0.3,
@@ -84,9 +84,9 @@ class IntegratedWeldDetector:
                 "defect_weight": 0.4,
             },
             "width_thresholds": {
-                "min_width_mm": 3.0,
-                "max_width_mm": 8.0,
-                "optimal_width_mm": 5.5,
+                "min_width_mm": 9.0,
+                "max_width_mm": 11.0,
+                "optimal_width_mm": 10.0,
             },
             "display": {
                 "window_width": 1280,
@@ -211,14 +211,14 @@ class IntegratedWeldDetector:
             return {"width_mm": 0, "score": 0, "error": str(e)}
 
     def _apply_defect_score(self, current: int, cls: int) -> int:
-        """根据 cls 严重等级调整 defect_score；未识别的 cls 维持不变。"""
-        if cls == 3:  # Good Weld
+        """根据 cls 严重等级调整 defect_score；按 best.pt 6 类映射。"""
+        if cls == 3:  # Good Welding
             return current + 10
-        if cls in (0, 1, 4, 6, 7, 8, 9):  # 严重
+        if cls in (0, 1):  # 严重：Bad Welding / Crack
             return current - 35
-        if cls in (2, 5, 10, 11, 12, 13, 14):  # 中等
+        if cls == 4:  # 中等：Porosity
             return current - 20
-        if cls in (15, 16):  # 轻微
+        if cls in (2, 5):  # 轻微：Excess Reinforcement / Spatters
             return current - 8
         return current
 
