@@ -118,10 +118,10 @@ class BoardIdStabilizer:
         recent = list(self.history)
         first = recent[0]
         if first is not None and all(r == first for r in recent):
-            # 连续 N 帧同一 ID（非 None）→ 切换
+            # 连续 N 帧都是同一个 ID（非 None）才切换 preset
             self.current_id = first
         elif all(r is None for r in recent):
-            # 连续 N 帧都没识别到 → 清除（焊板移走 / 标记被遮挡）
+            # 连续 N 帧都没识别到就清除（焊板被移走 / 粉笔标记被遮挡）
             self.current_id = None
         # 其他情况（混合）保持上一次 current_id 不动
         return self.current_id
