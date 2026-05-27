@@ -11,6 +11,8 @@ import {
   Sparkles,
   ShieldCheck,
 } from "lucide-react"
+import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { API_ENDPOINTS } from "@/lib/api"
 import { useAuth } from "@/contexts/AuthContext"
 import { SessionListSidebar } from "./session-list-sidebar"
@@ -294,7 +296,57 @@ export function AITeacherChatContent({
                         ? "bg-[#1e1417] border border-red-500/20 text-slate-200 rounded-tl-none shadow-[0_10px_40px_rgba(0,0,0,0.3)]"
                         : "bg-[#161d2b] border border-white/[0.06] text-slate-200 rounded-tl-none shadow-[0_10px_40px_rgba(0,0,0,0.3)]"
                   }`}>
-                    <div className="whitespace-pre-wrap">{message.content}</div>
+                    {message.role === "user" ? (
+                      <div className="whitespace-pre-wrap">{message.content}</div>
+                    ) : (
+                      // assistant 走 markdown：DeepSeek 回复常带表格 / 列表 / 标题 /
+                      // emoji，纯 whitespace-pre-wrap 会把 ## 和 |...| 都当源码显示
+                      <div className="markdown-content">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            h1: (props) => <h1 className="text-lg font-bold text-orange-200 mt-3 mb-2 first:mt-0" {...props} />,
+                            h2: (props) => <h2 className="text-base font-bold text-orange-200 mt-3 mb-2 first:mt-0" {...props} />,
+                            h3: (props) => <h3 className="text-sm font-bold text-orange-100/90 mt-2 mb-1.5 first:mt-0" {...props} />,
+                            p: (props) => <p className="my-2 first:mt-0 last:mb-0" {...props} />,
+                            ul: (props) => <ul className="list-disc pl-5 my-2 space-y-1" {...props} />,
+                            ol: (props) => <ol className="list-decimal pl-5 my-2 space-y-1" {...props} />,
+                            li: (props) => <li className="leading-relaxed" {...props} />,
+                            strong: (props) => <strong className="text-orange-100 font-semibold" {...props} />,
+                            em: (props) => <em className="text-slate-300 italic" {...props} />,
+                            code: ({ className, children, ...props }) => {
+                              const isBlock = className?.startsWith("language-")
+                              if (isBlock) {
+                                return (
+                                  <code className="block bg-slate-950/60 border border-white/[0.05] rounded-md px-3 py-2 my-2 text-[13px] font-mono overflow-x-auto" {...props}>
+                                    {children}
+                                  </code>
+                                )
+                              }
+                              return (
+                                <code className="bg-slate-950/60 border border-white/[0.05] rounded px-1.5 py-0.5 text-[13px] font-mono text-orange-200" {...props}>
+                                  {children}
+                                </code>
+                              )
+                            },
+                            pre: (props) => <pre className="my-2 overflow-x-auto" {...props} />,
+                            table: (props) => (
+                              <div className="my-3 overflow-x-auto">
+                                <table className="border-collapse text-[13px] w-auto" {...props} />
+                              </div>
+                            ),
+                            thead: (props) => <thead className="bg-slate-800/60" {...props} />,
+                            th: (props) => <th className="border border-white/10 px-3 py-1.5 text-left font-semibold text-orange-100" {...props} />,
+                            td: (props) => <td className="border border-white/10 px-3 py-1.5 align-top" {...props} />,
+                            blockquote: (props) => <blockquote className="border-l-2 border-orange-500/50 pl-3 my-2 text-slate-400 italic" {...props} />,
+                            a: (props) => <a className="text-orange-300 hover:text-orange-200 underline" target="_blank" rel="noreferrer" {...props} />,
+                            hr: () => <hr className="my-3 border-white/10" />,
+                          }}
+                        >
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    )}
                   </div>
 
                   <span className="text-[10px] text-slate-500 font-bold uppercase tracking-widest px-1 opacity-60">

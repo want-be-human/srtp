@@ -1131,15 +1131,35 @@ async def get_snapshot():
     }
 
 
+def _ensure_detector_with_calibration():
+    """detect-image / detect-frame 路径：detector 不存在时按标定值新建。
+
+    之前两个端点都是 IntegratedWeldDetector(config_file=...) 漏传 pixels_per_mm，
+    导致用户先调单图检测、detector 被 cache 后开实时检测也拿不到标定。
+    """
+    global detector
+    if detector is not None or not (YOLO_AVAILABLE and IntegratedWeldDetector):
+        return
+    try:
+        from api.calibration import load_calibration_pixels_per_mm
+        pixels_per_mm = load_calibration_pixels_per_mm()
+    except Exception:
+        pixels_per_mm = None
+    detector = IntegratedWeldDetector(
+        config_file=YOLO_CONFIG_FILE,
+        pixels_per_mm=pixels_per_mm,
+    )
+    cal_msg = f"标定 {pixels_per_mm:.3f} px/mm" if pixels_per_mm else "未标定"
+    print(f"[OK] YOLO 检测器初始化成功（{cal_msg}）")
+
+
 @router.post("/detect-frame")
 async def detect_frame(request: FrameDetectionRequest):
     """前端用 canvas 抓 video 一帧、转 base64 发过来，单帧 YOLO 检测。"""
     global detector
 
     try:
-        if detector is None and YOLO_AVAILABLE and IntegratedWeldDetector:
-            detector = IntegratedWeldDetector(config_file=YOLO_CONFIG_FILE)
-            print("[OK] YOLO 检测器初始化成功")
+        _ensure_detector_with_calibration()
 
         try:
             image_data = request.frame_data
@@ -1230,9 +1250,7 @@ async def detect_image(request: ImageDetectionRequest):
     global detector
 
     try:
-        if detector is None and YOLO_AVAILABLE and IntegratedWeldDetector:
-            detector = IntegratedWeldDetector(config_file=YOLO_CONFIG_FILE)
-            print("[OK] YOLO 检测器初始化成功（图片检测）")
+        _ensure_detector_with_calibration()
 
         try:
             image_data = request.image_data

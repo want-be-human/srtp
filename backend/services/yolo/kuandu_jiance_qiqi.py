@@ -109,11 +109,17 @@ class PreciseWeldDetector:
             pixels_per_cm = height / self.image_height_cm
         min_thickness_pixels = int(min_thickness_cm * pixels_per_cm)
 
+        # 搜索半径按真实物理宽度上限算，避免硬编码 ±12 像素把宽度上限锁死：
+        # 之前死磕 ±12，遇到标定 pixels_per_mm≈5 时无论真实多宽都被夹在 5mm 以内。
+        # 真实焊缝 1-15mm，留 1.5 倍裕量按 22mm 上限去找两侧暗带。
+        max_half_search_mm = 22.0 / 2.0
+        search_radius_px = max(12, int(max_half_search_mm * pixels_per_cm / 10.0))
+
         thickness_top = actual_y
         thickness_bottom = actual_y
 
         # 5% 银白色门槛：焊缝中线两侧的余高带银亮像素占比通常 > 5%，再低就当背景
-        for dy in range(-12, 0):
+        for dy in range(-search_radius_px, 0):
             check_y = actual_y + dy
             if 0 <= check_y < height:
                 row = cv2.cvtColor(image[check_y : check_y + 1, :], cv2.COLOR_RGB2GRAY)[
@@ -126,7 +132,7 @@ class PreciseWeldDetector:
                 else:
                     break
 
-        for dy in range(1, 13):
+        for dy in range(1, search_radius_px + 1):
             check_y = actual_y + dy
             if 0 <= check_y < height:
                 row = cv2.cvtColor(image[check_y : check_y + 1, :], cv2.COLOR_RGB2GRAY)[
