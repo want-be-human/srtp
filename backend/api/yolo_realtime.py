@@ -487,6 +487,11 @@ def inference_loop():
                             "weld_frame_w": results.get("weld_frame_w", 0),
                             "weld_frame_h": results.get("weld_frame_h", 0),
                             "width_source": results.get("width_source", ""),
+                            # 焊缝粗定位搜索带 + 失败原因，给 OSD 调试用
+                            "band_top": results.get("band_top"),
+                            "band_bot": results.get("band_bot"),
+                            "band_center_y": results.get("band_center_y"),
+                            "width_fail_reason": results.get("fail_reason", ""),
                         }
                     else:
                         import random
@@ -1066,7 +1071,26 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
                         (10, dst_h - 14), font, 0.55, (0, 255, 255), 2,
                     )
                 else:
-                    # Fallback：没拿到列点（首帧 / 算法失败），画旧的两条水平横线
+                    # 没拿到列点：可能是首帧 / 算法失败。先画粗定位搜索带 + 失败原因，
+                    # 让用户能看到"焊缝大概在哪 / 为什么没收敛"，再 fallback 到水平横线
+                    band_top = current_detection_data.get("band_top")
+                    band_bot = current_detection_data.get("band_bot")
+                    if (band_top is not None and band_bot is not None
+                            and src_w > 0 and src_h > 0):
+                        sx = dst_w / float(src_w) if src_w else 1.0
+                        sy = dst_h / float(src_h) if src_h else 1.0
+                        b_top = int(band_top * sy)
+                        b_bot = int(band_bot * sy)
+                        cv2.rectangle(display_frame, (0, b_top), (dst_w - 1, b_bot),
+                                     (0, 200, 255), 2)
+                        cv2.putText(display_frame, 'search band (coarse weld Y)',
+                                   (10, max(20, b_top - 6)),
+                                   font, 0.5, (0, 200, 255), 1)
+                    fail_msg = current_detection_data.get("width_fail_reason", "")
+                    if fail_msg:
+                        cv2.putText(display_frame, f'weld not found: {fail_msg}',
+                                   (10, dst_h - 14), font, 0.55, (0, 0, 255), 2)
+
                     top_y = current_detection_data.get("top_y")
                     bottom_y = current_detection_data.get("bottom_y")
                     if top_y is not None and bottom_y is not None:

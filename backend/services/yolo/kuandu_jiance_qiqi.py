@@ -52,10 +52,15 @@ FALLBACK_IMAGE_HEIGHT_CM = 15.0
 # 比"找一行最亮"鲁棒得多：单列噪声被多列平均抹掉，倾斜 / 弯曲焊缝也能贴合走向。
 _COL_STEP = 30
 _FWHM_RATIO = 0.5            # 半高全宽：peak * 0.5 作为上下边界阈值
-_MIN_PEAK_BRIGHTNESS = 80    # 列内峰值太暗就当这列没焊缝（背景列）
-_MIN_VALID_COLUMNS = 8       # 至少这么多有效列才算找到焊缝
-_OUTLIER_CENTER_PX = 50      # 列中心 y 偏离中位数超过这个像素当离群点剔除
+_MIN_PEAK_BRIGHTNESS = 50    # 列内峰值太暗就当这列没焊缝；放宽到 50 兼容暗淡焊缝
+_MIN_VALID_COLUMNS = 4       # 至少 4 列收敛才算找到焊缝；放宽到 4 兼容焊缝短的情况
+_OUTLIER_CENTER_PX_RATIO = 0.04   # 列中心 y 偏离中位数超过帧高 * 这个比例剔除
 _OUTLIER_THICK_RATIO = 0.6   # 列厚度偏离中位数超过这个比例剔除
+# 焊缝粗定位的行均值平滑窗口：避免列 argmax 被画面其他亮区（充电宝、反光带）干扰。
+# 整图行均值 → 平滑 → argmax 得到焊缝大致 Y 中心，然后列采样只在中心 ±band_radius 范围内
+_ROW_SMOOTH_WIN = 31
+# 默认搜索带半径（pixels_per_mm 可用时按 max_weld_mm * pixels_per_mm 计算覆盖物理厚度）
+_DEFAULT_BAND_HEIGHT_RATIO = 0.15  # 帧高 15% 作 fallback 半径
 
 
 def detect_along_columns(
@@ -70,34 +75,73 @@ def detect_along_columns(
     - 原算法找一行最亮，假设焊缝水平，倾斜 / 弯曲焊缝会偏
     - 原算法上下扩展靠绝对亮度阈值（120），同样焊件不同光照下不稳
     - 新算法每列独立找峰值 + FWHM（相对阈值），抗光照、抗倾斜、给出焊缝走向
+
+    粗定位：整图行均值平滑后 argmax 得焊缝大致 Y，列采样只在中心 ±band_radius 范围
+    内做，避免画面里其他亮区（充电宝、塑料反光带）把列 argmax 拽走。
     """
     height, width = image_rgb.shape[:2]
     gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
 
-    columns_raw = []  # 每个元素 (x, center_y, top_y, bottom_y)
+    # Step 1: 焊缝行粗定位。整行平均亮度后用 _ROW_SMOOTH_WIN 平滑窗口去 hotspot
+    row_mean = gray.mean(axis=1).astype(np.float32)
+    win = min(_ROW_SMOOTH_WIN, max(3, height // 50))
+    if win % 2 == 0:
+        win += 1
+    kernel = np.ones(win, dtype=np.float32) / win
+    row_smoothed = np.convolve(row_mean, kernel, mode="same")
+    center_y_global = int(np.argmax(row_smoothed))
+
+    # Step 2: 限定搜索带半径。标定可用按物理上限（22mm 留 2× 余量）；否则按帧高比例
+    if pixels_per_mm:
+        band_radius = max(50, int(22.0 * pixels_per_mm))
+    else:
+        band_radius = max(50, int(height * _DEFAULT_BAND_HEIGHT_RATIO))
+
+    band_top = max(0, center_y_global - band_radius)
+    band_bot = min(height, center_y_global + band_radius + 1)
+
+    # Step 3: 在搜索带内做列 FWHM
+    columns_raw = []  # 每个元素 (x, center_y, top_y, bottom_y) - 全图坐标
     sample_xs = list(range(col_step, max(col_step + 1, width - col_step), col_step))
+    skipped_dim = 0
 
     for x in sample_xs:
-        col = gray[:, x]
-        peak_y = int(np.argmax(col))
-        peak_val = int(col[peak_y])
+        col = gray[band_top:band_bot, x]
+        if col.size < 5:
+            continue
+        peak_y_local = int(np.argmax(col))
+        peak_val = int(col[peak_y_local])
 
         if peak_val < _MIN_PEAK_BRIGHTNESS:
+            skipped_dim += 1
             continue
 
         half = peak_val * _FWHM_RATIO
-        # 从峰值向上找首个低于 half 的行
-        top = peak_y
-        while top > 0 and col[top - 1] >= half:
-            top -= 1
-        # 从峰值向下
-        bot = peak_y
-        while bot < height - 1 and col[bot + 1] >= half:
-            bot += 1
+        top_l = peak_y_local
+        while top_l > 0 and col[top_l - 1] >= half:
+            top_l -= 1
+        bot_l = peak_y_local
+        while bot_l < col.size - 1 and col[bot_l + 1] >= half:
+            bot_l += 1
 
-        columns_raw.append((x, peak_y, top, bot))
+        # 转回全图坐标
+        columns_raw.append((
+            x,
+            band_top + peak_y_local,
+            band_top + top_l,
+            band_top + bot_l,
+        ))
+
+    band_meta = {
+        "band_center_y": center_y_global,
+        "band_top": band_top,
+        "band_bot": band_bot,
+        "skipped_dim_cols": skipped_dim,
+        "sampled_cols": len(sample_xs),
+    }
 
     if len(columns_raw) < _MIN_VALID_COLUMNS:
+        # 列收敛不足：用户能在 OSD 看到 band 框 + 失败提示，知道粗定位在哪
         return {
             "found": False,
             "columns": [],
@@ -106,6 +150,10 @@ def detect_along_columns(
             "raw_count": len(columns_raw),
             "valid_count": 0,
             "calibrated": bool(pixels_per_mm is not None),
+            "frame_w": int(width),
+            "frame_h": int(height),
+            "fail_reason": f"列峰值不够亮（{skipped_dim} 列被暗淡剔除）",
+            **band_meta,
         }
 
     # 离群剔除：相对中位数判定，对绝对亮度差异免疫
@@ -114,9 +162,12 @@ def detect_along_columns(
     median_center = float(np.median(centers_arr))
     median_thick = float(np.median(thick_arr))
 
+    # 中心偏离阈值按帧高比例算，不写死像素，适应各种分辨率
+    center_tol_px = max(30, int(height * _OUTLIER_CENTER_PX_RATIO))
+
     columns_valid = [
         c for c in columns_raw
-        if abs(c[1] - median_center) <= _OUTLIER_CENTER_PX
+        if abs(c[1] - median_center) <= center_tol_px
         and abs((c[3] - c[2] + 1) - median_thick) <= median_thick * _OUTLIER_THICK_RATIO
     ]
 
@@ -130,6 +181,10 @@ def detect_along_columns(
             "raw_count": len(columns_raw),
             "valid_count": len(columns_valid),
             "calibrated": bool(pixels_per_mm is not None),
+            "frame_w": int(width),
+            "frame_h": int(height),
+            "fail_reason": f"列收敛不稳（{len(columns_raw)}/{len(sample_xs)} 候选, 离群后剩 {len(columns_valid)}）",
+            **band_meta,
         }
 
     avg_thick_px = float(np.mean([c[3] - c[2] + 1 for c in columns_valid]))
@@ -150,6 +205,7 @@ def detect_along_columns(
         "calibrated": bool(pixels_per_mm is not None),
         "frame_w": int(width),
         "frame_h": int(height),
+        **band_meta,
     }
 
 

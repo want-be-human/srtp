@@ -211,7 +211,22 @@ class IntegratedWeldDetector:
                     "frame_h": col_result["frame_h"],
                     "valid_cols": col_result["valid_count"],
                     "raw_cols": col_result["raw_count"],
+                    # 粗定位搜索带元信息，给 OSD 调试可视化
+                    "band_top": col_result.get("band_top"),
+                    "band_bot": col_result.get("band_bot"),
+                    "band_center_y": col_result.get("band_center_y"),
                 }
+
+            # 逐列失败时把失败原因和搜索带元信息透传给 OSD，
+            # 让用户能看到"粗定位在哪 / 为什么没收敛"，方便诊断
+            fail_info = {
+                "fail_reason": col_result.get("fail_reason", ""),
+                "band_top": col_result.get("band_top"),
+                "band_bot": col_result.get("band_bot"),
+                "band_center_y": col_result.get("band_center_y"),
+                "frame_w": col_result.get("frame_w"),
+                "frame_h": col_result.get("frame_h"),
+            }
 
             # Fallback：逐列没收敛时退回旧亮度扩展（不传 roi_bbox，避免漂移）
             result = self.width_detector.enhanced_weld_detection(rgb, roi_bbox=None)
@@ -226,12 +241,14 @@ class IntegratedWeldDetector:
                     "center_y": int(result["center_y"]),
                     "rejected_count": int(result.get("rejected_count", 0)),
                     "source": "brightness_expand_fallback",
+                    **fail_info,
                 }
             return {
                 "width_mm": 0,
                 "score": 0,
                 "error": "未检测到焊缝",
                 "rejected_count": int(result.get("rejected_count", 0)),
+                **fail_info,
             }
         except Exception as e:
             return {"width_mm": 0, "score": 0, "error": str(e)}
@@ -552,6 +569,11 @@ class IntegratedWeldDetector:
             "weld_frame_w": results["width"].get("frame_w", 0),
             "weld_frame_h": results["width"].get("frame_h", 0),
             "width_source": results["width"].get("source", ""),
+            # 粗定位搜索带元信息 + 失败原因，给 OSD 调试可视化
+            "band_top": results["width"].get("band_top"),
+            "band_bot": results["width"].get("band_bot"),
+            "band_center_y": results["width"].get("band_center_y"),
+            "fail_reason": results["width"].get("fail_reason", ""),
         }
 
         if "top_y" in results["width"]:
