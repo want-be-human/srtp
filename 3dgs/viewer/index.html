@@ -50,7 +50,7 @@
     document.body.appendChild(renderer.domElement);
 
     // ── Parse PLY ──
-    const resp = await fetch('model_fixed.ply');
+    const resp = await fetch('ruler.ply');
     const buf = await resp.arrayBuffer();
     const hdrEnd = new TextDecoder().decode(buf).indexOf('end_header\n') + 11;
     const floats = new Float32Array(buf.slice(hdrEnd));
