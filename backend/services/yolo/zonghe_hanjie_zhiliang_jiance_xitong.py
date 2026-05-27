@@ -84,9 +84,9 @@ class IntegratedWeldDetector:
                 "defect_weight": 0.4,
             },
             "width_thresholds": {
-                "min_width_mm": 10.0,
-                "max_width_mm": 11.2,
-                "optimal_width_mm": 10.8,
+                "min_width_mm": 10.5,
+                "max_width_mm": 11.1,
+                "optimal_width_mm": 11.7,
             },
             "display": {
                 "window_width": 1280,
@@ -182,16 +182,37 @@ class IntegratedWeldDetector:
             return {"width_mm": 0, "score": 0, "error": "宽度检测器未初始化"}
 
         try:
-            # ROI bbox 可能落后于 detect_defects 一帧（并行线程），但只用来圈搜索带，1 帧偏差无影响
+            roi_bbox = self.roi_tracker.last_bbox
+
+            # 优先路径：ROI tracker 已经走了 OTSU 二值化 + 形态学 + 最大连通域
+            # 拿到焊缝条精确 bbox，直接用 bbox 高度算宽度，比旧的"亮度扩展"算法稳。
+            # 旧算法的 5% bright_ratio 门槛要么扩到自然边界要么立刻 stop，
+            # 没有中间状态，导致宽度只在 5mm（保底）和 11.2mm（碰边界）两态跳。
+            if roi_bbox is not None and self.pixels_per_mm:
+                _, by1, _, by2 = roi_bbox
+                px_height = max(1, by2 - by1)
+                width_mm = px_height / float(self.pixels_per_mm)
+                width_score = self._calculate_width_score(width_mm)
+                center_y = (by1 + by2) // 2
+                return {
+                    "width_mm": float(round(width_mm, 2)),
+                    "score": float(width_score),
+                    "top_y": int(by1),
+                    "bottom_y": int(by2),
+                    "center_y": int(center_y),
+                    "rejected_count": 0,
+                    "source": "roi_bbox",
+                }
+
+            # Fallback：首帧 ROI 还没建立 / 未标定时走旧亮度扩展
             result = self.width_detector.enhanced_weld_detection(
                 cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
-                roi_bbox=self.roi_tracker.last_bbox,
+                roi_bbox=roi_bbox,
             )
 
             if result["found"]:
                 width_mm = result["thickness_mm"]
                 width_score = self._calculate_width_score(width_mm)
-
                 return {
                     "width_mm": float(width_mm),
                     "score": float(width_score),
@@ -199,6 +220,7 @@ class IntegratedWeldDetector:
                     "bottom_y": int(result["bottom_y"]),
                     "center_y": int(result["center_y"]),
                     "rejected_count": int(result.get("rejected_count", 0)),
+                    "source": "brightness_expand",
                 }
             else:
                 return {
@@ -211,16 +233,20 @@ class IntegratedWeldDetector:
             return {"width_mm": 0, "score": 0, "error": str(e)}
 
     def _apply_defect_score(self, current: int, cls: int) -> int:
-        """根据 cls 严重等级调整 defect_score；按 best.pt 6 类映射。"""
+        """根据 cls 严重等级调整 defect_score；按 best.pt 6 类映射。
+
+        cls=5 Spatters 业务上不扣分（飞溅是焊后清理副产物，影响外观但不影响
+        结构强度），模型仍能识别并实时显示框，但不计入分数。
+        """
         if cls == 3:  # Good Welding
             return current + 10
         if cls in (0, 1):  # 严重：Bad Welding / Crack
             return current - 35
         if cls == 4:  # 中等：Porosity
             return current - 20
-        if cls in (2, 5):  # 轻微：Excess Reinforcement / Spatters
+        if cls == 2:  # 轻微：Excess Reinforcement
             return current - 8
-        return current
+        return current  # cls=5 Spatters 不扣分
 
     def detect_defects(self, frame: np.ndarray, use_tta: bool = False) -> Dict:
         """检测缺陷类型；use_tta=True 时走 ultralytics 内置 augment（多尺度+翻转 TTA），实时流默认关。"""
@@ -308,19 +334,31 @@ class IntegratedWeldDetector:
         return self.detect_defects(frame, use_tta=True)
 
     def _calculate_width_score(self, width_mm: float) -> float:
+        """宽度评分曲线：
+        - 范围 [min, max] 内：从 100 缓慢掉到 95（在合理范围里都算合格焊缝）
+        - 范围外：按偏离距离每 mm 扣 30，下限 40（保留梯度，不一刀切 20）
+
+        以前是范围外直接 20、范围内最多扣 60，导致合格焊缝（如距 optimal 0.3mm）
+        也只有 77 分，跟"在合理范围内就是合格"的工程语义不匹配。
+        """
         thresholds = self.config["width_thresholds"]
         optimal = thresholds["optimal_width_mm"]
         min_width = thresholds["min_width_mm"]
         max_width = thresholds["max_width_mm"]
 
-        if width_mm < min_width or width_mm > max_width:
-            return 20
+        if min_width <= width_mm <= max_width:
+            distance = abs(width_mm - optimal)
+            half_range = max(optimal - min_width, max_width - optimal)
+            if half_range <= 0:
+                return 100.0
+            # 范围内最多扣 5：optimal 满分，边界 95 分
+            score = 100 - (distance / half_range) * 5
+            return float(round(max(95, min(100, score)), 1))
 
-        distance = abs(width_mm - optimal)
-        max_distance = max(optimal - min_width, max_width - optimal)
-        # 距离最佳宽度按线性掉分，最多扣 60；超出范围直接保底 20
-        score = 100 - (distance / max_distance) * 60
-        return max(20, min(100, score))
+        # 出范围：每偏 1mm 扣 30，从 85 起扣，底 40
+        out_dist = max(min_width - width_mm, width_mm - max_width)
+        score = max(40, 85 - out_dist * 30)
+        return float(round(score, 1))
 
     def calculate_total_score(
         self, smoothness_result: Dict, width_result: Dict, defect_result: Dict
