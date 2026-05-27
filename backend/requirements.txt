@@ -49,6 +49,14 @@ reportlab==4.0.8
 # HTTP请求
 requests==2.31.0
 
+# 测试框架
+# pytest 8+ 跟 fastapi 0.109 / httpx 0.26 兼容，主跑后端单元 + API 冒烟测试
+pytest>=8.0
+# 部分异步路由（如 /predict）需要 pytest-asyncio 才能跑协程测试
+pytest-asyncio>=0.23
+# 后端用 TestClient 起内存版应用，依赖 starlette 自带的 httpx 客户端
+# httpx 已在上面锁过 0.26.0
+
 # ============================================
 # 安装说明:
 # pip install -r requirements.txt

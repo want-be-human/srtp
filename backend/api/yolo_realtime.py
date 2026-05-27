@@ -582,7 +582,6 @@ def inference_loop():
                             "board": board_meta,
                         }
                     else:
-                        import random
                         smoothness = random.randint(70, 95)
                         width = random.randint(70, 95)
                         defect = random.randint(70, 95)
