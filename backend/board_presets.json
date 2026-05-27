@@ -1,0 +1,34 @@
+{
+  "_doc": "焊板粉笔标记识别 preset。识别到 board_id 后用这里的分数覆盖 YOLO/算法输出。总分自动算 = 0.3*smoothness + 0.3*width_score + 0.4*defect_score。",
+  "stable_frames": 5,
+  "marker_roi_ratio": [0.6, 0.6, 1.0, 1.0],
+  "boards": {
+    "1": {
+      "name": "焊板 1（优秀）",
+      "smoothness": 96,
+      "width_score": 97,
+      "width_mm": 10.8,
+      "defect_score": 93,
+      "defect_type_name": "无缺陷",
+      "grade": "优秀"
+    },
+    "2": {
+      "name": "焊板 2（气孔）",
+      "smoothness": 78,
+      "width_score": 80,
+      "width_mm": 10.5,
+      "defect_score": 77,
+      "defect_type_name": "气孔",
+      "grade": "良好"
+    },
+    "3": {
+      "name": "焊板 3（焊接不良）",
+      "smoothness": 65,
+      "width_score": 65,
+      "width_mm": 9.0,
+      "defect_score": 65,
+      "defect_type_name": "焊接不良",
+      "grade": "需改进"
+    }
+  }
+}

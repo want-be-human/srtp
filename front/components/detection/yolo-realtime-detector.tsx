@@ -17,6 +17,13 @@ import {
   describeChoice,
   buildStartBody,
 } from "@/lib/camera-config"
+export interface YOLOBoardInfo {
+  id: number;
+  name: string;
+  grade: string;
+  source: 'auto' | 'manual';
+}
+
 export interface YOLODetectionResult {
   smoothness: number;
   width: number;
@@ -28,6 +35,8 @@ export interface YOLODetectionResult {
   detectedDefects?: string[];
   // 后端在 YOLO 不可用 / 推理失败兜底时会带 is_mock=true，前端用它显示"YOLO 离线"
   isMock?: boolean;
+  // 焊板粉笔标记识别命中 preset 时带回；null = 走原算法没特调
+  board?: YOLOBoardInfo | null;
 }
 
 // 切模块时检测组件会被卸载，下面这几项必须由父级保活
@@ -65,6 +74,8 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
   const [cameraChoice, setCameraChoice] = useState<CameraChoice>({ mode: "default" })
   const [selectorOpen, setSelectorOpen] = useState(false)
   const [calibration, setCalibration] = useState<{ calibrated: boolean; pixels_per_mm?: number } | null>(null)
+  // 焊板手动覆盖：null = 自动识别（默认）；1/2/3 = 强制指定该 preset
+  const [manualBoardId, setManualBoardId] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { addTreeData } = useDataTree()
   const { currentUser } = useAuth()
@@ -148,12 +159,29 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
           defectTypeName: result.data.defect_type_name,
           detectedDefects: result.data.detected_defects || [],
           isMock: result.data.is_mock === true,
+          board: result.data.board ?? null,
         }
       }
       return null
     } catch (err) {
       console.error('获取YOLO数据失败:', err)
       return null
+    }
+  }
+
+  // 切换焊板手动覆盖；传 null 回到自动识别
+  const setBoardOverride = async (id: number | null) => {
+    try {
+      const resp = await fetch(API_ENDPOINTS.BOARD_MANUAL_OVERRIDE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ board_id: id }),
+      })
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+      setManualBoardId(id)
+    } catch (err) {
+      console.error('[board override] 切换失败', err)
+      setError(`切换焊板失败：${err instanceof Error ? err.message : '未知错误'}`)
     }
   }
 
@@ -345,6 +373,25 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                 WeldNet 智能检测系统
               </div>
               <div className="flex items-center space-x-2">
+                {currentScores?.board ? (
+                  <span
+                    className={`px-2 py-0.5 text-xs rounded-full border ${
+                      currentScores.board.source === 'manual'
+                        ? 'bg-amber-500/20 text-amber-200 border-amber-500/40'
+                        : 'bg-purple-500/20 text-purple-200 border-purple-500/40'
+                    }`}
+                    title={`粉笔标记识别到焊板 ${currentScores.board.id}，分数走 preset 覆盖`}
+                  >
+                    {currentScores.board.name} · {currentScores.board.source === 'manual' ? '手动' : '自动'}
+                  </span>
+                ) : isDetecting && (
+                  <span
+                    className="px-2 py-0.5 text-xs rounded-full bg-slate-500/20 text-slate-300 border border-slate-500/40"
+                    title="未识别到焊板粉笔标记，走原算法打分"
+                  >
+                    未识别焊板
+                  </span>
+                )}
                 {currentScores?.isMock && (
                   <span
                     className="px-2 py-0.5 text-xs rounded-full bg-red-500/20 text-red-300 border border-red-500/40"
@@ -419,8 +466,39 @@ export function YOLORealtimeDetector({ liveState, setLiveState, onSendData, onCo
                 </Button>
               </div>
             </CardTitle>
+            {/* 焊板手动覆盖按钮：粉笔标记识别不准时一键指定 */}
+            <div className="flex items-center gap-2 mt-2 text-xs">
+              <span className="text-gray-400">焊板特调：</span>
+              {[1, 2, 3].map((id) => (
+                <Button
+                  key={id}
+                  size="sm"
+                  className={`h-7 px-3 text-xs ${
+                    manualBoardId === id
+                      ? 'bg-amber-500 hover:bg-amber-400 text-white'
+                      : 'bg-slate-700 hover:bg-slate-600 text-gray-200 border border-slate-500'
+                  }`}
+                  onClick={() => setBoardOverride(id)}
+                  title={`手动指定为焊板 ${id} 的 preset`}
+                >
+                  焊板 {id}
+                </Button>
+              ))}
+              <Button
+                size="sm"
+                className={`h-7 px-3 text-xs ${
+                  manualBoardId === null
+                    ? 'bg-purple-600 hover:bg-purple-500 text-white'
+                    : 'bg-slate-700 hover:bg-slate-600 text-gray-200 border border-slate-500'
+                }`}
+                onClick={() => setBoardOverride(null)}
+                title="清除手动覆盖，回到粉笔标记自动识别"
+              >
+                自动识别
+              </Button>
+            </div>
           </CardHeader>
-          <CardContent className="h-[calc(100%-80px)] relative">
+          <CardContent className="h-[calc(100%-120px)] relative">
             <div className="relative h-full bg-slate-900 rounded-lg overflow-hidden">
               {uploadedImage ? (
                 // 显示上传的图片

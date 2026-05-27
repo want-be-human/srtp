@@ -55,6 +55,10 @@ export const API_ENDPOINTS = {
   CALIBRATION_CURRENT: `${API_BASE_URL}/api/v1/calibration/current`,
   SNAPSHOT: `${API_BASE_URL}/api/v1/snapshot`,
 
+  // 焊板粉笔标记识别：手动覆盖识别结果 + 取 preset 列表
+  BOARD_MANUAL_OVERRIDE: `${API_BASE_URL}/api/v1/board/manual-override`,
+  BOARD_PRESETS: `${API_BASE_URL}/api/v1/board/presets`,
+
   // 视频上传 (3DGS)
   UPLOAD_VIDEO: `${API_BASE_URL}/api/v1/upload-video`,
 

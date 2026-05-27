@@ -57,7 +57,39 @@ except ImportError as e:
     IntegratedWeldDetector = None
     YOLO_AVAILABLE = False
 
+# 焊板粉笔标记识别（每块焊板右下角画 1/2/3 个白色圆点，识别后用 preset 覆盖分数）
+try:
+    from services.yolo.board_marker import (
+        BoardIdStabilizer,
+        DEFAULT_ROI as BOARD_DEFAULT_ROI,
+        detect_board_id,
+        get_roi_abs_bbox,
+    )
+    BOARD_MARKER_AVAILABLE = True
+except ImportError as e:
+    print(f"警告：board_marker 不可用，焊板特调失效: {e}")
+    BOARD_MARKER_AVAILABLE = False
+    BOARD_DEFAULT_ROI = (0.6, 0.6, 1.0, 1.0)
+
 router = APIRouter()
+
+
+def _load_board_presets() -> dict:
+    """从 backend/board_presets.json 读取焊板 preset；缺失或解析失败返回空 dict。"""
+    import json
+    presets_path = os.path.join(backend_dir, "board_presets.json")
+    try:
+        with open(presets_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"[WARN] 读取 board_presets.json 失败，焊板特调走默认（不覆盖）: {exc}")
+        return {}
+
+
+BOARD_PRESETS = _load_board_presets()
+# 前端 POST /board/manual-override 可以临时覆盖识别结果（粉笔识别不准时用）
+_manual_board_id: Optional[int] = None
+_manual_board_lock = threading.Lock()
 
 # 全局变量
 capture_thread = None
@@ -430,6 +462,14 @@ def inference_loop():
 
         stabilizer = DetectionStabilizer()
 
+        # 焊板特调：粉笔标记识别 + 多帧投票稳定，识别到 1/2/3 后用 preset 覆盖分数
+        board_stable_frames = int(BOARD_PRESETS.get("stable_frames", 5))
+        board_roi = tuple(BOARD_PRESETS.get("marker_roi_ratio", BOARD_DEFAULT_ROI))
+        if BOARD_MARKER_AVAILABLE:
+            board_stabilizer = BoardIdStabilizer(stable_frames=board_stable_frames)
+        else:
+            board_stabilizer = None
+
         interval = 1.0 / max(1, INFERENCE_FPS)
         next_t = time.perf_counter()
 
@@ -465,6 +505,43 @@ def inference_loop():
                                 en_name = confirmed[0].get("class_name", "未知")
                                 defect_name = DEFECT_EN_TO_CN.get(en_name, en_name)
 
+                        # 焊板特调：识别粉笔圆点 + 多帧稳定，命中 preset 后覆盖各项分数
+                        active_board_id: Optional[int] = None
+                        board_source = ""
+                        board_meta = None
+                        with _manual_board_lock:
+                            manual_id = _manual_board_id
+                        if manual_id is not None:
+                            active_board_id = manual_id
+                            board_source = "manual"
+                        elif board_stabilizer is not None:
+                            raw_id = detect_board_id(frame, roi_ratio=board_roi)
+                            active_board_id = board_stabilizer.update(raw_id)
+                            if active_board_id is not None:
+                                board_source = "auto"
+
+                        if active_board_id is not None:
+                            preset = (BOARD_PRESETS.get("boards") or {}).get(str(active_board_id))
+                            if preset:
+                                # 覆盖 stabilizer 平滑过的分数 + width_mm + 缺陷名
+                                smoothed_scores["smoothness"] = float(preset.get("smoothness", smoothed_scores["smoothness"]))
+                                smoothed_scores["width"] = float(preset.get("width_score", smoothed_scores["width"]))
+                                smoothed_scores["defect_type"] = float(preset.get("defect_score", smoothed_scores["defect_type"]))
+                                total = (
+                                    0.3 * smoothed_scores["smoothness"]
+                                    + 0.3 * smoothed_scores["width"]
+                                    + 0.4 * smoothed_scores["defect_type"]
+                                )
+                                smoothed_scores["total_score"] = round(total, 2)
+                                results["width_mm"] = float(preset.get("width_mm", results.get("width_mm", 0)))
+                                defect_name = str(preset.get("defect_type_name", defect_name))
+                                board_meta = {
+                                    "id": active_board_id,
+                                    "name": preset.get("name", f"焊板 {active_board_id}"),
+                                    "grade": preset.get("grade", ""),
+                                    "source": board_source,
+                                }
+
                         detection_data = {
                             "smoothness": smoothed_scores.get("smoothness", 0),
                             "width": smoothed_scores.get("width", 0),
@@ -492,6 +569,8 @@ def inference_loop():
                             "band_bot": results.get("band_bot"),
                             "band_center_y": results.get("band_center_y"),
                             "width_fail_reason": results.get("fail_reason", ""),
+                            # 焊板特调元信息（前端显示当前是哪块焊板 + 来源）
+                            "board": board_meta,
                         }
                     else:
                         import random
@@ -629,6 +708,29 @@ async def start_yolo_detection(request: StartDetectionRequest):
             status_code=500,
             detail=f"启动YOLO检测失败: {str(e)}"
         )
+
+
+class BoardOverrideRequest(BaseModel):
+    """前端手动指定当前焊板编号；None / 0 表示清除手动覆盖回到自动识别。"""
+    board_id: Optional[int] = None
+
+
+@router.post("/board/manual-override")
+async def set_board_manual_override(req: BoardOverrideRequest):
+    """前端手动指定当前焊板编号（粉笔识别不准时兜底）。"""
+    global _manual_board_id
+    if req.board_id is not None and req.board_id not in (1, 2, 3):
+        raise HTTPException(status_code=400, detail="board_id 必须是 1/2/3 或 null")
+    with _manual_board_lock:
+        _manual_board_id = req.board_id
+    print(f"[board override] manual_board_id={_manual_board_id}")
+    return {"status": "success", "manual_board_id": _manual_board_id}
+
+
+@router.get("/board/presets")
+async def get_board_presets():
+    """前端拿 preset 列表展示按钮（焊板 1/2/3 + 名字）。"""
+    return BOARD_PRESETS
 
 
 @router.post("/stop-yolo")
