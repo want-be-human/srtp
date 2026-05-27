@@ -90,6 +90,9 @@ async def chat_with_teacher(payload: ChatInput):
     messages.append({"role": "user", "content": user_message})
 
     try:
+        # 教师对话允许等久一点：1024 tokens DeepSeek 慢起来要 10-20s，
+        # 共享 client 默认 12s read 是给雷达 / 预测那类要"快出 fallback"的接口的，
+        # 这里单独覆盖到 30s，避免常规对话被截成 timeout
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=AI_MODEL,
@@ -97,6 +100,7 @@ async def chat_with_teacher(payload: ChatInput):
             max_tokens=1024,
             temperature=0.7,
             stream=False,
+            timeout=30.0,
         )
         ai_response = response.choices[0].message.content
         return {"response": ai_response}
