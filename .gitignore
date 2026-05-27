@@ -40,10 +40,8 @@ backend/welding.db
 # PDF 报告生成器的输出，每次跑都会产文件，不入仓
 backend/services/pdf_generator/*.pdf
 
-# 本地数据辅助脚本（不入仓库）
-backend/scripts/seed_*.py
-backend/scripts/purge_*.py
-backend/scripts/train_temporal_offline.py
+# 本地数据辅助脚本（整个目录不入仓库）
+backend/scripts/
 
 # 临时草稿
 123
@@ -51,3 +49,4 @@ backend/scripts/train_temporal_offline.py
 前端重构.md
 *.tmp
 *.bak
+docs/
