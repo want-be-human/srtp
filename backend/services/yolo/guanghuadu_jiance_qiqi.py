@@ -9,10 +9,14 @@ from typing import Dict
 
 from .weld_roi import suppress_highlight
 
-# GLCM 对比度的归一化上限，超过视为完全粗糙；20 ≈ 8 级量化下接近随机的均值
-_GLCM_NORM_CAP = 20.0
-# 局部 5×5 方差均值的归一化上限，焊缝表面正常纹理远低于这值
-_VARIANCE_NORM_CAP = 200.0
+# GLCM 对比度的归一化上限。手工电弧焊 / TIG 的鱼鳞焊缝条本身就是规则波纹，
+# GLCM 在 8 级量化下落在 15-25 是正常，cap 设 20 会把"正常鱼鳞"判成接近满扣分。
+# 35 留给真正杂乱的焊面（破洞 + 飞溅满天）才打满 1.0。
+_GLCM_NORM_CAP = 35.0
+# 局部 5×5 方差均值的归一化上限。焊缝条的明暗起伏 + 拍照分辨率高
+# （单像素只覆盖几十微米）让方差很容易 400-600，cap 200 会让正常焊缝
+# 的方差归一化项直接拉满扣完。400 让正常鱼鳞焊缝不至于一刀切到底。
+_VARIANCE_NORM_CAP = 400.0
 
 
 def _glcm_contrast(gray: np.ndarray, levels: int = 8) -> float:

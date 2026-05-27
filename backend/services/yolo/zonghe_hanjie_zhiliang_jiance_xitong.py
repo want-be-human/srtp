@@ -84,9 +84,9 @@ class IntegratedWeldDetector:
                 "defect_weight": 0.4,
             },
             "width_thresholds": {
-                "min_width_mm": 9.0,
-                "max_width_mm": 11.0,
-                "optimal_width_mm": 10.0,
+                "min_width_mm": 10.0,
+                "max_width_mm": 11.2,
+                "optimal_width_mm": 10.8,
             },
             "display": {
                 "window_width": 1280,
