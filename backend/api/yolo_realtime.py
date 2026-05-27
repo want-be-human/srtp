@@ -482,6 +482,11 @@ def inference_loop():
                             "roi_bbox": results.get("roi_bbox"),
                             "dropped_outside": results.get("dropped_outside", 0),
                             "width_rejected_count": results.get("width_rejected_count", 0),
+                            # 沿焊缝曲线点（OSD 用 polyline 画 3 条线：中心 / 上下边界）
+                            "weld_columns": results.get("weld_columns", []),
+                            "weld_frame_w": results.get("weld_frame_w", 0),
+                            "weld_frame_h": results.get("weld_frame_h", 0),
+                            "width_source": results.get("width_source", ""),
                         }
                     else:
                         import random
@@ -1034,15 +1039,43 @@ def generate_video_stream(fps: int, quality: int, width: int, height: int):
                 cv2.putText(display_frame, f'Defect: {defect_score:.1f} ({detection_count} found)',
                           (10, 140), font, 0.6, (255, 255, 255), 2)
 
-                top_y = current_detection_data.get("top_y")
-                bottom_y = current_detection_data.get("bottom_y")
-                if top_y is not None and bottom_y is not None:
-                    cv2.line(display_frame, (0, top_y), (display_frame.shape[1], top_y), (0, 0, 255), 3)
-                    cv2.line(display_frame, (0, bottom_y), (display_frame.shape[1], bottom_y), (0, 0, 255), 3)
-                    cv2.putText(display_frame, f'Top: {top_y}', (10, top_y-10 if top_y > 20 else top_y+20),
-                              font, 0.5, (0, 0, 255), 2)
-                    cv2.putText(display_frame, f'Bottom: {bottom_y}', (10, bottom_y+20),
-                              font, 0.5, (0, 0, 255), 2)
+                # 优先：沿焊缝 3 条曲线（中心黄 / 上下边界红），坐标从原图 scale 到推流尺寸
+                weld_cols = current_detection_data.get("weld_columns") or []
+                src_w = int(current_detection_data.get("weld_frame_w") or 0)
+                src_h = int(current_detection_data.get("weld_frame_h") or 0)
+                dst_h, dst_w = display_frame.shape[:2]
+                if weld_cols and src_w > 0 and src_h > 0:
+                    sx = dst_w / float(src_w)
+                    sy = dst_h / float(src_h)
+                    pts_center = np.array(
+                        [[int(c[0] * sx), int(c[1] * sy)] for c in weld_cols], dtype=np.int32
+                    )
+                    pts_top = np.array(
+                        [[int(c[0] * sx), int(c[2] * sy)] for c in weld_cols], dtype=np.int32
+                    )
+                    pts_bot = np.array(
+                        [[int(c[0] * sx), int(c[3] * sy)] for c in weld_cols], dtype=np.int32
+                    )
+                    cv2.polylines(display_frame, [pts_center], False, (0, 255, 255), 2)
+                    cv2.polylines(display_frame, [pts_top], False, (0, 0, 255), 2)
+                    cv2.polylines(display_frame, [pts_bot], False, (0, 0, 255), 2)
+                    src_msg = current_detection_data.get("width_source", "fwhm")
+                    cv2.putText(
+                        display_frame,
+                        f'Weld curve: {len(weld_cols)} cols ({src_msg})',
+                        (10, dst_h - 14), font, 0.55, (0, 255, 255), 2,
+                    )
+                else:
+                    # Fallback：没拿到列点（首帧 / 算法失败），画旧的两条水平横线
+                    top_y = current_detection_data.get("top_y")
+                    bottom_y = current_detection_data.get("bottom_y")
+                    if top_y is not None and bottom_y is not None:
+                        cv2.line(display_frame, (0, top_y), (dst_w, top_y), (0, 0, 255), 3)
+                        cv2.line(display_frame, (0, bottom_y), (dst_w, bottom_y), (0, 0, 255), 3)
+                        cv2.putText(display_frame, f'Top: {top_y}', (10, top_y-10 if top_y > 20 else top_y+20),
+                                  font, 0.5, (0, 0, 255), 2)
+                        cv2.putText(display_frame, f'Bottom: {bottom_y}', (10, bottom_y+20),
+                                  font, 0.5, (0, 0, 255), 2)
 
                 roi_bbox = current_detection_data.get("roi_bbox")
                 if roi_bbox and len(roi_bbox) == 4:

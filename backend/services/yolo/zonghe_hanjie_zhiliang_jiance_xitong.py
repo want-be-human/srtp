@@ -178,38 +178,43 @@ class IntegratedWeldDetector:
             return {"score": 0, "error": str(e)}
 
     def detect_width(self, frame: np.ndarray) -> Dict:
+        """优先走逐列采样 + FWHM，给出沿焊缝的曲线（中心 / 上下边界 3 条）。
+        新算法不收敛时（焊缝太暗 / 有效列太少）fallback 到旧的亮度扩展。
+        故意不传 roi_bbox：ROI tracker 跨帧扩展会漂移，污染宽度测量。
+        """
         if self.width_detector is None:
             return {"width_mm": 0, "score": 0, "error": "宽度检测器未初始化"}
 
         try:
-            roi_bbox = self.roi_tracker.last_bbox
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-            # 优先路径：ROI tracker 已经走了 OTSU 二值化 + 形态学 + 最大连通域
-            # 拿到焊缝条精确 bbox，直接用 bbox 高度算宽度，比旧的"亮度扩展"算法稳。
-            # 旧算法的 5% bright_ratio 门槛要么扩到自然边界要么立刻 stop，
-            # 没有中间状态，导致宽度只在 5mm（保底）和 11.2mm（碰边界）两态跳。
-            if roi_bbox is not None and self.pixels_per_mm:
-                _, by1, _, by2 = roi_bbox
-                px_height = max(1, by2 - by1)
-                width_mm = px_height / float(self.pixels_per_mm)
+            col_result = self.width_detector.detect_columns(rgb)
+
+            if col_result["found"]:
+                width_mm = col_result["width_mm"]
                 width_score = self._calculate_width_score(width_mm)
-                center_y = (by1 + by2) // 2
+                cols = col_result["columns"]
+                centers = [c[1] for c in cols]
+                tops = [c[2] for c in cols]
+                bots = [c[3] for c in cols]
                 return {
                     "width_mm": float(round(width_mm, 2)),
                     "score": float(width_score),
-                    "top_y": int(by1),
-                    "bottom_y": int(by2),
-                    "center_y": int(center_y),
+                    "top_y": int(np.median(tops)),
+                    "bottom_y": int(np.median(bots)),
+                    "center_y": int(np.median(centers)),
                     "rejected_count": 0,
-                    "source": "roi_bbox",
+                    "source": "fwhm_columns",
+                    # 给 MJPEG OSD 画三条 polyline：每条 [(x, y), ...]
+                    "weld_columns": cols,
+                    "frame_w": col_result["frame_w"],
+                    "frame_h": col_result["frame_h"],
+                    "valid_cols": col_result["valid_count"],
+                    "raw_cols": col_result["raw_count"],
                 }
 
-            # Fallback：首帧 ROI 还没建立 / 未标定时走旧亮度扩展
-            result = self.width_detector.enhanced_weld_detection(
-                cv2.cvtColor(frame, cv2.COLOR_BGR2RGB),
-                roi_bbox=roi_bbox,
-            )
-
+            # Fallback：逐列没收敛时退回旧亮度扩展（不传 roi_bbox，避免漂移）
+            result = self.width_detector.enhanced_weld_detection(rgb, roi_bbox=None)
             if result["found"]:
                 width_mm = result["thickness_mm"]
                 width_score = self._calculate_width_score(width_mm)
@@ -220,15 +225,14 @@ class IntegratedWeldDetector:
                     "bottom_y": int(result["bottom_y"]),
                     "center_y": int(result["center_y"]),
                     "rejected_count": int(result.get("rejected_count", 0)),
-                    "source": "brightness_expand",
+                    "source": "brightness_expand_fallback",
                 }
-            else:
-                return {
-                    "width_mm": 0,
-                    "score": 0,
-                    "error": "未检测到焊缝",
-                    "rejected_count": int(result.get("rejected_count", 0)),
-                }
+            return {
+                "width_mm": 0,
+                "score": 0,
+                "error": "未检测到焊缝",
+                "rejected_count": int(result.get("rejected_count", 0)),
+            }
         except Exception as e:
             return {"width_mm": 0, "score": 0, "error": str(e)}
 
@@ -543,6 +547,11 @@ class IntegratedWeldDetector:
             "dropped_outside": results["defects"].get("dropped_outside", 0),
             "width_rejected_count": results["width"].get("rejected_count", 0),
             "processing_time": time.time() - start_time,
+            # 沿焊缝曲线点（中心 / 上下边界三组）给 MJPEG OSD 画 polyline 用
+            "weld_columns": results["width"].get("weld_columns", []),
+            "weld_frame_w": results["width"].get("frame_w", 0),
+            "weld_frame_h": results["width"].get("frame_h", 0),
+            "width_source": results["width"].get("source", ""),
         }
 
         if "top_y" in results["width"]:

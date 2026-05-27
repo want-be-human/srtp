@@ -48,6 +48,111 @@ def _pick_best_row(row_brightness: np.ndarray, fusion_score: np.ndarray) -> Tupl
 FALLBACK_IMAGE_HEIGHT_CM = 15.0
 
 
+# 逐列采样找焊缝参数：沿 X 轴每 _COL_STEP 像素取一列，每列独立用 FWHM 找上下边界。
+# 比"找一行最亮"鲁棒得多：单列噪声被多列平均抹掉，倾斜 / 弯曲焊缝也能贴合走向。
+_COL_STEP = 30
+_FWHM_RATIO = 0.5            # 半高全宽：peak * 0.5 作为上下边界阈值
+_MIN_PEAK_BRIGHTNESS = 80    # 列内峰值太暗就当这列没焊缝（背景列）
+_MIN_VALID_COLUMNS = 8       # 至少这么多有效列才算找到焊缝
+_OUTLIER_CENTER_PX = 50      # 列中心 y 偏离中位数超过这个像素当离群点剔除
+_OUTLIER_THICK_RATIO = 0.6   # 列厚度偏离中位数超过这个比例剔除
+
+
+def detect_along_columns(
+    image_rgb: np.ndarray,
+    pixels_per_mm: Optional[float] = None,
+    image_height_cm: float = FALLBACK_IMAGE_HEIGHT_CM,
+    col_step: int = _COL_STEP,
+) -> Dict:
+    """逐列采样 + FWHM 找焊缝，返回三组曲线点（中心 / 上界 / 下界）和平均宽度。
+
+    跟原 enhanced_weld_detection 的差异：
+    - 原算法找一行最亮，假设焊缝水平，倾斜 / 弯曲焊缝会偏
+    - 原算法上下扩展靠绝对亮度阈值（120），同样焊件不同光照下不稳
+    - 新算法每列独立找峰值 + FWHM（相对阈值），抗光照、抗倾斜、给出焊缝走向
+    """
+    height, width = image_rgb.shape[:2]
+    gray = cv2.cvtColor(image_rgb, cv2.COLOR_RGB2GRAY)
+
+    columns_raw = []  # 每个元素 (x, center_y, top_y, bottom_y)
+    sample_xs = list(range(col_step, max(col_step + 1, width - col_step), col_step))
+
+    for x in sample_xs:
+        col = gray[:, x]
+        peak_y = int(np.argmax(col))
+        peak_val = int(col[peak_y])
+
+        if peak_val < _MIN_PEAK_BRIGHTNESS:
+            continue
+
+        half = peak_val * _FWHM_RATIO
+        # 从峰值向上找首个低于 half 的行
+        top = peak_y
+        while top > 0 and col[top - 1] >= half:
+            top -= 1
+        # 从峰值向下
+        bot = peak_y
+        while bot < height - 1 and col[bot + 1] >= half:
+            bot += 1
+
+        columns_raw.append((x, peak_y, top, bot))
+
+    if len(columns_raw) < _MIN_VALID_COLUMNS:
+        return {
+            "found": False,
+            "columns": [],
+            "width_mm": 0.0,
+            "thickness_px": 0.0,
+            "raw_count": len(columns_raw),
+            "valid_count": 0,
+            "calibrated": bool(pixels_per_mm is not None),
+        }
+
+    # 离群剔除：相对中位数判定，对绝对亮度差异免疫
+    centers_arr = np.array([c[1] for c in columns_raw])
+    thick_arr = np.array([c[3] - c[2] + 1 for c in columns_raw])
+    median_center = float(np.median(centers_arr))
+    median_thick = float(np.median(thick_arr))
+
+    columns_valid = [
+        c for c in columns_raw
+        if abs(c[1] - median_center) <= _OUTLIER_CENTER_PX
+        and abs((c[3] - c[2] + 1) - median_thick) <= median_thick * _OUTLIER_THICK_RATIO
+    ]
+
+    if len(columns_valid) < _MIN_VALID_COLUMNS:
+        # 中位数过滤后没剩多少有效列，说明焊缝识别不稳，放弃
+        return {
+            "found": False,
+            "columns": [],
+            "width_mm": 0.0,
+            "thickness_px": 0.0,
+            "raw_count": len(columns_raw),
+            "valid_count": len(columns_valid),
+            "calibrated": bool(pixels_per_mm is not None),
+        }
+
+    avg_thick_px = float(np.mean([c[3] - c[2] + 1 for c in columns_valid]))
+
+    if pixels_per_mm:
+        width_mm = avg_thick_px / float(pixels_per_mm)
+    else:
+        pixels_per_cm = height / image_height_cm
+        width_mm = avg_thick_px / pixels_per_cm * 10.0
+
+    return {
+        "found": True,
+        "columns": columns_valid,  # [(x, center, top, bot), ...]
+        "width_mm": float(width_mm),
+        "thickness_px": avg_thick_px,
+        "raw_count": len(columns_raw),
+        "valid_count": len(columns_valid),
+        "calibrated": bool(pixels_per_mm is not None),
+        "frame_w": int(width),
+        "frame_h": int(height),
+    }
+
+
 class PreciseWeldDetector:
 
     def __init__(
@@ -67,12 +172,30 @@ class PreciseWeldDetector:
                 "结果带 calibrated=False；请走 /calibration 标定后才能当真实测量值用"
             )
 
+    def detect_columns(self, image_rgb: np.ndarray) -> Dict:
+        """逐列采样 + FWHM 找焊缝（推荐路径）。
+
+        包装顶层 detect_along_columns，自动喂入实例的 pixels_per_mm 和 image_height_cm。
+        相比 enhanced_weld_detection：
+        - 给出沿焊缝的曲线（中心 / 上下边界各一条），抗倾斜
+        - 用相对阈值（FWHM）替代绝对亮度，抗光照
+        - 不依赖 ROI tracker，免漂移
+        """
+        return detect_along_columns(
+            image_rgb,
+            pixels_per_mm=self.pixels_per_mm,
+            image_height_cm=self.image_height_cm,
+        )
+
     def enhanced_weld_detection(
         self,
         image: np.ndarray,
         roi_bbox: Optional[Tuple[int, int, int, int]] = None,
     ) -> Dict:
-        """亮度梯度找焊缝行；roi_bbox 给定时只在该 y 区间里搜，没给就退回中心 1/3。"""
+        """[legacy] 亮度梯度找焊缝行；roi_bbox 给定时只在该 y 区间里搜，没给就退回中心 1/3。
+
+        保留作 fallback：新的 detect_columns 在某些图上不收敛时仍能跑出一个数。
+        """
         height, width = image.shape[:2]
 
         if roi_bbox is not None:
