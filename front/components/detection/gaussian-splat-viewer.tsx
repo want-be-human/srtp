@@ -26,23 +26,29 @@ const SH_C0 = 0.28209479177387814
 
 const VERTEX_SHADER = `
   varying vec3 vColor;
+  varying float vOpacity;
   uniform float uSize;
+  attribute float opacity;
   void main() {
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     gl_PointSize = uSize * (200.0 / -mv.z);
-    gl_PointSize = clamp(gl_PointSize, 0.3, 30.0);
+    gl_PointSize = clamp(gl_PointSize, 0.25, 12.0);
     gl_Position = projectionMatrix * mv;
     vColor = color;
+    vOpacity = opacity;
   }
 `
 
 const FRAGMENT_SHADER = `
   varying vec3 vColor;
+  varying float vOpacity;
   void main() {
     float d = length(gl_PointCoord - 0.5) * 2.0;
     if (d > 1.0) discard;
     float a = 1.0 - d * d;
-    gl_FragColor = vec4(vColor, a * 0.6);
+    float luminance = dot(vColor, vec3(0.2126, 0.7152, 0.0722));
+    vec3 displayColor = mix(vec3(luminance), vColor, 0.82);
+    gl_FragColor = vec4(displayColor, a * vOpacity * 0.7);
   }
 `
 
@@ -77,8 +83,8 @@ const PIPELINE_STAGES = [
     label: '3D 高斯泼溅训练',
     duration: 4000,
     getDetail: (elapsed: number, total: number) => {
-      const iter = Math.min(7000, Math.floor(elapsed / total * 7000))
-      return `迭代 ${iter.toLocaleString()} / 7,000`
+      const iter = Math.min(30000, Math.floor(elapsed / total * 30000))
+      return `迭代 ${iter.toLocaleString()} / 30,000`
     },
   },
   {
@@ -101,6 +107,7 @@ interface LoadState {
 interface ParsedData {
   positions: Float32Array
   colors: Float32Array
+  opacities: Float32Array
   count: number
   center: [number, number, number]
 }
@@ -223,6 +230,7 @@ function SplatRenderer({
 
         const pos = new Float32Array(count * 3)
         const col = new Float32Array(count * 3)
+        const opacity = new Float32Array(count)
         let sumX = 0, sumY = 0, sumZ = 0
 
         for (let i = 0; i < count; i++) {
@@ -232,6 +240,7 @@ function SplatRenderer({
           col[i * 3]     = Math.min(1, Math.max(0, 0.5 + SH_C0 * floats[o + 6]))
           col[i * 3 + 1] = Math.min(1, Math.max(0, 0.5 + SH_C0 * floats[o + 7]))
           col[i * 3 + 2] = Math.min(1, Math.max(0, 0.5 + SH_C0 * floats[o + 8]))
+          opacity[i] = Math.min(1, Math.max(0, floats[o + 54]))
           sumX += x; sumY += y; sumZ += z
         }
 
@@ -239,7 +248,7 @@ function SplatRenderer({
 
         const cx = sumX / count, cy = sumY / count, cz = sumZ / count
         centerRef.current.set(cx, cy, cz)
-        const parsed: ParsedData = { positions: pos, colors: col, count, center: [cx, cy, cz] }
+        const parsed: ParsedData = { positions: pos, colors: col, opacities: opacity, count, center: [cx, cy, cz] }
         dataRef.current = parsed
         loadedRef.current = true
         _splatCache.set(modelUrl, parsed)
@@ -268,13 +277,13 @@ function SplatRenderer({
     if (!data || revealingRef.current) return
     revealingRef.current = true
 
-    const { positions, colors, count } = data
+    const { positions, colors, opacities, count } = data
 
     const mat = new THREE.ShaderMaterial({
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
       // mini 预览框小，默认点大些让密度看着够；全屏模式保留细颗粒
-      uniforms: { uSize: { value: mini ? 0.15 : 0.08 } },
+      uniforms: { uSize: { value: mini ? 0.08 : 0.04 } },
       vertexColors: true,
       transparent: true,
       depthWrite: false,
@@ -289,6 +298,7 @@ function SplatRenderer({
       const geom = new THREE.BufferGeometry()
       geom.setAttribute('position', new THREE.BufferAttribute(positions, 3))
       geom.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+      geom.setAttribute('opacity', new THREE.BufferAttribute(opacities, 1))
       const points = new THREE.Points(geom, mat)
       scene.add(points)
       batchedPointsRef.current.push(points)
@@ -315,6 +325,7 @@ function SplatRenderer({
       if (batchCount > 0) {
         const batchPos = new Float32Array(batchCount * 3)
         const batchCol = new Float32Array(batchCount * 3)
+        const batchOpacity = new Float32Array(batchCount)
         for (let i = 0; i < batchCount; i++) {
           const src = start + i
           batchPos[i * 3] = positions[src * 3]
@@ -323,11 +334,13 @@ function SplatRenderer({
           batchCol[i * 3] = colors[src * 3]
           batchCol[i * 3 + 1] = colors[src * 3 + 1]
           batchCol[i * 3 + 2] = colors[src * 3 + 2]
+          batchOpacity[i] = opacities[src]
         }
 
         const geom = new THREE.BufferGeometry()
         geom.setAttribute('position', new THREE.BufferAttribute(batchPos, 3))
         geom.setAttribute('color', new THREE.BufferAttribute(batchCol, 3))
+        geom.setAttribute('opacity', new THREE.BufferAttribute(batchOpacity, 1))
 
         const points = new THREE.Points(geom, mat)
         scene.add(points)
@@ -357,7 +370,7 @@ function SplatRenderer({
         const c = centerRef.current
         camera.position.set(c.x + 8, c.y + 3, c.z + 6)
         camera.lookAt(c)
-        if (sharedMatRef.current) sharedMatRef.current.uniforms.uSize.value = 0.08
+        if (sharedMatRef.current) sharedMatRef.current.uniforms.uSize.value = mini ? 0.08 : 0.04
       },
       topView: () => {
         const c = centerRef.current

@@ -63,7 +63,7 @@ export const API_ENDPOINTS = {
   UPLOAD_VIDEO: `${API_BASE_URL}/api/v1/upload-video`,
 
   // 3DGS 模型
-  MODEL_3DGS: `${API_BASE_URL}/static/3dgs/model_light.ply?v=ruler`,
+  MODEL_3DGS: `${API_BASE_URL}/static/3dgs/ruler_30000.ply?v=30000`,
 };
 
 export default API_BASE_URL;
